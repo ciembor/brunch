@@ -79,10 +79,13 @@ module Brunch
 
     def validate_configuration!(value)
       abort "brunch.yml must contain a mapping." unless value.is_a?(Hash)
-      abort "Unknown Brunch manager: #{value["manager"]}." unless %w[docker_compose podman_compose command].include?(value["manager"])
+      abort "Unknown Brunch manager: #{value["manager"]}." unless %w[docker_compose podman_compose local_process command].include?(value["manager"])
       abort "Unknown Brunch lifecycle: #{value["lifecycle"]}." unless %w[switch_only active_only].include?(value["lifecycle"])
       if %w[docker_compose podman_compose].include?(value["manager"]) && (!value["compose_file"].is_a?(String) || value["compose_file"].empty?)
         abort "compose_file must be a non-empty string."
+      end
+      if value["manager"] == "local_process" && (!value["command"].is_a?(String) || value["command"].empty?)
+        abort "local_process manager requires a non-empty command."
       end
       return unless value["manager"] == "command"
 

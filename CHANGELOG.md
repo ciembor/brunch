@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0 - 2026-09-28
+
+- Add a native `local_process` manager for `bin/dev`-style commands, with PID
+  tracking, process-group shutdown, and snapshot-local logs.
+
 ## 0.2.0 - 2026-09-28
 
 - Add pluggable environment managers. Docker Compose remains the default and a

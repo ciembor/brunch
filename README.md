@@ -89,6 +89,17 @@ manager: podman_compose
 compose_file: compose.yaml
 ```
 
+### Local process
+
+Use `local_process` for a branch-local development command such as `bin/dev`.
+Brunch starts it in a dedicated process group, records its PID, stops that
+group on a branch switch, and saves its output to `.brunch.log` in the snapshot.
+
+```yaml
+manager: local_process
+command: bin/dev
+```
+
 ### Lifecycle mode
 
 The default `switch_only` mode stops the branch that was active immediately

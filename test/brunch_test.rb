@@ -49,6 +49,24 @@ class BrunchTest < Minitest::Test
     end
   end
 
+  def test_local_process_manager_tracks_and_stops_its_process_group
+    Dir.mktmpdir do |snapshot|
+      manager = Brunch::Managers.build("manager" => "local_process", "command" => "sleep 10")
+      entry = { "ref" => "main", "port" => 3000, "project" => "brunch-main", "snapshot" => snapshot }
+
+      assert manager.start(entry)
+      assert_equal "running", manager.status(entry)
+      assert manager.stop(entry)
+      20.times do
+        break unless manager.healthy?(entry)
+        sleep 0.01
+      end
+      refute manager.healthy?(entry)
+    ensure
+      manager&.stop(entry) if entry
+    end
+  end
+
   def test_active_only_stops_every_non_current_environment
     Dir.mktmpdir do |directory|
       original_directory = Dir.pwd

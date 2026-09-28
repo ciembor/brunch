@@ -121,6 +121,53 @@ module Brunch
       end
     end
 
+    class LocalProcess < Base
+      def start(entry)
+        log_path = File.join(entry.fetch("snapshot"), ".brunch.log")
+        entry["pid"] = Process.spawn(environment(entry), "sh", "-lc", @configuration.fetch("command"), chdir: entry.fetch("snapshot"), out: [log_path, "a"], err: [log_path, "a"], pgroup: true)
+        entry["log_path"] = log_path
+        Process.detach(entry.fetch("pid"))
+        true
+      end
+
+      def stop(entry)
+        pid = entry["pid"]
+        return true unless pid
+        Process.kill("TERM", -pid)
+        true
+      rescue Errno::ESRCH
+        true
+      end
+
+      def status(entry) = running?(entry) ? "running" : "stopped"
+      def healthy?(entry) = running?(entry)
+
+      def logs(entry)
+        path = entry["log_path"]
+        return super unless path && File.file?(path)
+        puts File.readlines(path).last(100)
+        true
+      end
+
+      private
+
+      def running?(entry)
+        Process.kill(0, entry.fetch("pid"))
+        true
+      rescue Errno::ESRCH
+        false
+      end
+
+      def environment(entry)
+        {
+          "BRUNCH_REF" => entry.fetch("ref", ""),
+          "BRUNCH_PORT" => entry.fetch("port").to_s,
+          "BRUNCH_PROJECT" => entry.fetch("project"),
+          "BRUNCH_SNAPSHOT" => entry.fetch("snapshot")
+        }
+      end
+    end
+
     # Runs project-provided commands, making Brunch compatible with tools such
     # as Podman, Kubernetes wrappers, Foreman, or custom process supervisors.
     class Command < Base
@@ -169,6 +216,7 @@ module Brunch
       case configuration.fetch("manager")
       when "docker_compose" then DockerCompose.new(configuration)
       when "podman_compose" then PodmanCompose.new(configuration)
+      when "local_process" then LocalProcess.new(configuration)
       when "command" then Command.new(configuration)
       else abort "Unknown Brunch manager: #{configuration.fetch("manager")}."
       end
