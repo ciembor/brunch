@@ -251,12 +251,17 @@ module Brunch
     def doctor(data)
       hooks_dir = git_output("rev-parse", "--git-path", "hooks")
       ports = data.fetch("environments").values.map { |entry| entry.fetch("port") }
+      hooks_installed = Hooks::EVENTS.all? do |event|
+        path = File.join(hooks_dir, event)
+        File.file?(path) && File.read(path).include?("Brunch::Hooks.dispatch")
+      end
       checks = {
         "Git repository" => !repo_root.empty?,
-        "Git hooks" => Hooks::EVENTS.all? { |event| File.file?(File.join(hooks_dir, event)) },
+        "Git hooks" => hooks_installed,
         "Configuration" => !!configuration,
         "#{configuration.fetch("manager")} availability" => manager.available?,
-        "Unique environment ports" => ports.uniq.size == ports.size
+        "Unique environment ports" => ports.uniq.size == ports.size,
+        "Environment port range" => ports.all? { |port| PORT_RANGE.cover?(port) }
       }
       checks.each { |name, passed| puts "#{passed ? "OK" : "FAIL"} #{name}" }
       abort "Brunch doctor found problems." unless checks.values.all?
