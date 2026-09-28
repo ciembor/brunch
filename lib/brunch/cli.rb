@@ -22,12 +22,16 @@ module Brunch
       case arguments
       in ["activate"] then activate
       in ["start", ref] then start_environment(ref, state)
+      in ["stop"] then stop_active_environment(state)
+      in ["restart"] then restart_active_environment(state)
+      in ["status"] then show_status(state)
+      in ["logs"] then show_logs(state)
       in ["cleanup"] then cleanup(state)
       in ["register", _ref] then cleanup(state)
       in ["install"] then Hooks.install
       in ["version"] | ["--version"] | ["-v"] then puts Brunch::VERSION
       else
-        warn "Usage: brunch {install|activate|start <ref>|cleanup|register <ref>|version}"
+        warn "Usage: brunch {install|activate|start <ref>|stop|restart|status|logs|cleanup|register <ref>|version}"
         return 64
       end
 
@@ -65,11 +69,28 @@ module Brunch
 
     def configuration
       path = File.join(repo_root, "brunch.yml")
-      return { "manager" => "docker_compose", "compose_file" => "compose.yaml" } unless File.file?(path)
-      { "manager" => "docker_compose", "compose_file" => "compose.yaml" }.merge(YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {})
+      value = { "manager" => "docker_compose", "compose_file" => "compose.yaml", "lifecycle" => "switch_only" }
+      value.merge!(YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}) if File.file?(path)
+      validate_configuration!(value)
+      value
     end
 
     def manager = Managers.build(configuration)
+
+    def validate_configuration!(value)
+      abort "brunch.yml must contain a mapping." unless value.is_a?(Hash)
+      abort "Unknown Brunch manager: #{value["manager"]}." unless %w[docker_compose podman_compose command].include?(value["manager"])
+      abort "Unknown Brunch lifecycle: #{value["lifecycle"]}." unless %w[switch_only active_only].include?(value["lifecycle"])
+      if %w[docker_compose podman_compose].include?(value["manager"]) && (!value["compose_file"].is_a?(String) || value["compose_file"].empty?)
+        abort "compose_file must be a non-empty string."
+      end
+      return unless value["manager"] == "command"
+
+      commands = value["commands"]
+      abort "command manager requires a commands mapping." unless commands.is_a?(Hash)
+      %w[start stop remove].each { |action| abort "command manager requires commands.#{action}." unless commands[action].is_a?(String) && !commands[action].empty? }
+      %w[create status health logs].each { |action| abort "commands.#{action} must be a string." if commands.key?(action) && !commands[action].is_a?(String) }
+    end
 
     def cksum(value)
       table = @cksum_table ||= Array.new(256) do |index|
@@ -136,6 +157,48 @@ module Brunch
       save_state(data)
     end
 
+    def active_entry(data)
+      ref = data["active_ref"]
+      return [nil, nil] unless ref && data.fetch("environments").key?(ref)
+      [ref, data.fetch("environments").fetch(ref)]
+    end
+
+    def stop_active_environment(data)
+      ref, entry = active_entry(data)
+      return warn "No active Brunch environment." unless entry
+      manager.stop(entry)
+      puts "Stopped #{entry.fetch("project")} for #{ref}."
+    end
+
+    def restart_active_environment(data)
+      ref, entry = active_entry(data)
+      return warn "No active Brunch environment." unless entry
+      manager.stop(entry)
+      start_environment(ref, data)
+    end
+
+    def show_status(data)
+      environments = data.fetch("environments")
+      if environments.empty?
+        puts "No Brunch environments."
+        return
+      end
+
+      environments.each do |ref, entry|
+        active = ref == data["active_ref"] ? "active" : "sleeping"
+        health = manager.healthy?(entry)
+        health_label = health.nil? ? "unknown" : health ? "healthy" : "unhealthy"
+        port = entry.fetch("port")
+        puts "#{ref} (#{active}): #{manager.status(entry)}, #{health_label}, http://127.0.0.1:#{port}"
+      end
+    end
+
+    def show_logs(data)
+      _ref, entry = active_entry(data)
+      return warn "No active Brunch environment." unless entry
+      manager.logs(entry)
+    end
+
     def start_environment(ref, data)
       return warn "#{configuration.fetch("manager")} is not available; skipped environment for #{ref}." unless manager.available?
       return warn "#{ref} does not resolve to a commit; skipped environment." unless ref_exists?(ref)
@@ -161,7 +224,11 @@ module Brunch
       current_ref = git_output("branch", "--show-current")
       return if current_ref.empty?
       previous_ref = data["active_ref"]
-      manager.stop(data.fetch("environments")[previous_ref]) if previous_ref && previous_ref != current_ref && data.fetch("environments").key?(previous_ref)
+      if configuration.fetch("lifecycle") == "active_only"
+        data.fetch("environments").each { |ref, entry| manager.stop(entry) if ref != current_ref }
+      elsif previous_ref && previous_ref != current_ref && data.fetch("environments").key?(previous_ref)
+        manager.stop(data.fetch("environments")[previous_ref])
+      end
       start_environment(current_ref, data)
       data["active_ref"] = current_ref
       save_state(data)

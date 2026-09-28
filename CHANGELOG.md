@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-09-28
 
 - Add pluggable environment managers. Docker Compose remains the default and a
   command-based manager supports other project-specific runtimes.
 - Add an optional `create` lifecycle command for provisioning custom-manager
   environments before they start.
+- Add the Podman Compose manager, configurable `switch_only` and `active_only`
+  lifecycle modes, and `status`, `stop`, `restart`, and `logs` commands.
+- Validate `brunch.yml` and expose manager status and health checks.
 
 ## 0.1.0 - 2026-09-28
 

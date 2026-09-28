@@ -5,6 +5,22 @@ require "tmpdir"
 require_relative "../lib/brunch"
 
 class BrunchTest < Minitest::Test
+  FakeManager = Struct.new(:events) do
+    def available? = true
+    def port_available?(_port) = true
+    def create(entry) = events << [:create, entry.fetch("ref")]
+    def start(entry) = events << [:start, entry.fetch("ref")]
+    def stop(entry) = events << [:stop, entry.fetch("ref")]
+    def reset(entry)
+      events << [:reset, entry.fetch("ref")]
+      FileUtils.rm_rf(entry.fetch("snapshot"))
+    end
+    def remove(entry) = events << [:remove, entry.fetch("ref")]
+    def status(_entry) = "running"
+    def healthy?(_entry) = true
+    def logs(_entry) = true
+  end
+
   def test_has_a_version
     refute_empty Brunch::VERSION
   end
@@ -30,6 +46,45 @@ class BrunchTest < Minitest::Test
       assert manager.stop(entry)
       assert manager.remove(entry)
       refute_path_exists snapshot
+    end
+  end
+
+  def test_active_only_stops_every_non_current_environment
+    Dir.mktmpdir do |directory|
+      original_directory = Dir.pwd
+      Dir.chdir(directory)
+      system("git", "init", "--quiet")
+      system("git", "config", "user.email", "test@example.com")
+      system("git", "config", "user.name", "Test")
+      File.write("README.md", "test\n")
+      system("git", "add", "README.md")
+      system("git", "commit", "--quiet", "-m", "initial")
+      initial_ref = `git branch --show-current`.strip
+      system("git", "branch", "other")
+      system("git", "switch", "--quiet", "-c", "feature")
+
+      events = []
+      manager = FakeManager.new(events)
+      cli = Brunch::CLI.new
+      cli.define_singleton_method(:configuration) { { "manager" => "command", "lifecycle" => "active_only", "compose_file" => "compose.yaml" } }
+      cli.define_singleton_method(:manager) { manager }
+      cli.define_singleton_method(:choose_port) { |_ref, _saved_port| 45_000 }
+      cli.send(:save_state, {
+        "active_ref" => initial_ref,
+        "environments" => {
+          initial_ref => { "ref" => initial_ref, "project" => "brunch-#{initial_ref}", "port" => 45_001, "snapshot" => File.join(directory, initial_ref) },
+          "other" => { "ref" => "other", "project" => "brunch-other", "port" => 45_002, "snapshot" => File.join(directory, "other") }
+        }
+      })
+
+      cli.send(:activate)
+
+      assert_includes events, [:stop, initial_ref]
+      assert_includes events, [:stop, "other"]
+      assert_includes events, [:create, "feature"]
+      assert_includes events, [:start, "feature"]
+    ensure
+      Dir.chdir(original_directory)
     end
   end
 end

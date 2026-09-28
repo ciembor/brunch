@@ -14,7 +14,7 @@ share a working directory.
 
 - Ruby 3.1 or newer
 - Git 2.28 or newer
-- Docker Desktop with Docker Compose v2
+- A supported environment manager: Docker Compose, Podman Compose, or project commands
 - [`git-hooks-ext`](https://github.com/ciembor/git-hooks-ext)
 
 ## Installation
@@ -77,9 +77,33 @@ a Git ref has been deleted and should remove any manager-owned persistent
 resources. This makes the adapter suitable for Podman, Kubernetes wrappers,
 Foreman/Overmind wrappers, or a project-specific script.
 
+Optional `status`, `health`, and `logs` commands power the corresponding Brunch
+commands. A successful `health` command reports a healthy environment.
+
+### Podman Compose
+
+Podman Compose uses the same Compose file contract as Docker Compose:
+
+```yaml
+manager: podman_compose
+compose_file: compose.yaml
+```
+
+### Lifecycle mode
+
+The default `switch_only` mode stops the branch that was active immediately
+before a checkout. Use `active_only` to ensure every non-current environment is
+stopped whenever a branch is activated:
+
+```yaml
+lifecycle: active_only
+```
+
 ## Lifecycle
 
-- A branch checkout stops the previous environment and starts the current one.
+- A branch checkout creates and starts the current environment.
+- `switch_only` stops the previous environment; `active_only` stops every
+  non-current environment.
 - Checking out a remote branch into a new local tracking branch works through
   the same `post-checkout` hook.
 - `brunch cleanup` removes the Compose projects, networks, volumes, and
@@ -88,6 +112,16 @@ Foreman/Overmind wrappers, or a project-specific script.
 Git 2.39 cannot reliably report a normal `git branch -d` operation to a hook.
 Run `brunch cleanup` after deletion, or let the next managed hook event perform
 the cleanup.
+
+## Operations
+
+```sh
+brunch status    # active/sleeping environments, manager status, health, port
+brunch stop      # stop the active environment without deleting it
+brunch restart   # recreate and start the active environment
+brunch logs      # show the last 100 logs (or run commands.logs)
+brunch cleanup   # delete environments whose Git refs no longer exist
+```
 
 ## Development
 

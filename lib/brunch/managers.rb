@@ -25,6 +25,15 @@ module Brunch
 
       def stop(_entry); end
 
+      def status(_entry) = "unknown"
+
+      def healthy?(_entry) = nil
+
+      def logs(_entry)
+        warn "Logs are not supported by this manager."
+        false
+      end
+
       def reset(entry)
         stop(entry)
         FileUtils.rm_rf(entry.fetch("snapshot"))
@@ -44,8 +53,21 @@ module Brunch
 
       def start(entry) = compose(entry, "up", "--detach", "--build", "--remove-orphans")
 
+      def status(entry)
+        return "unavailable" unless available?
+        healthy?(entry) ? "running" : "stopped"
+      end
+
+      def healthy?(entry)
+        return false unless available?
+        output, status = Open3.capture2(*compose_command(entry, "ps", "--status", "running", "--quiet"))
+        status.success? && !output.strip.empty?
+      end
+
+      def logs(entry) = compose(entry, "logs", "--tail", "100")
+
       def port_available?(port)
-        ports, = Open3.capture2("docker", "ps", "--format", "{{.Ports}}")
+        ports, = Open3.capture2(*ports_command)
         return false if ports.match?(/:#{port}->/)
 
         super
@@ -68,9 +90,34 @@ module Brunch
 
       private
 
-      def compose(entry, *arguments)
+      def compose_command(entry, *arguments)
         compose_file = File.join(entry.fetch("snapshot"), entry.fetch("compose_file"))
-        system({ "BRUNCH_PORT" => entry.fetch("port").to_s }, "docker", "compose", "--project-name", entry.fetch("project"), "--project-directory", entry.fetch("snapshot"), "--file", compose_file, *arguments)
+        ["docker", "compose", "--project-name", entry.fetch("project"), "--project-directory", entry.fetch("snapshot"), "--file", compose_file, *arguments]
+      end
+
+      def ports_command = ["docker", "ps", "--format", "{{.Ports}}"]
+
+      def compose(entry, *arguments)
+        system({ "BRUNCH_PORT" => entry.fetch("port").to_s }, *compose_command(entry, *arguments))
+      end
+    end
+
+    class PodmanCompose < DockerCompose
+      def available?
+        system("podman", "info", out: File::NULL, err: File::NULL)
+      end
+
+      private
+
+      def compose_command(entry, *arguments)
+        compose_file = File.join(entry.fetch("snapshot"), entry.fetch("compose_file"))
+        ["podman", "compose", "--project-name", entry.fetch("project"), "--project-directory", entry.fetch("snapshot"), "--file", compose_file, *arguments]
+      end
+
+      def ports_command = ["podman", "ps", "--format", "{{.Ports}}"]
+
+      def compose(entry, *arguments)
+        system({ "BRUNCH_PORT" => entry.fetch("port").to_s }, *compose_command(entry, *arguments))
       end
     end
 
@@ -82,6 +129,20 @@ module Brunch
       def stop(entry) = run("stop", entry)
       def remove(entry)
         run("remove", entry) && super
+      end
+
+      def status(entry)
+        command?("status") ? (run("status", entry) ? "running" : "stopped") : "unknown"
+      end
+
+      def healthy?(entry)
+        return nil unless command?("health")
+        run("health", entry)
+      end
+
+      def logs(entry)
+        return super unless command?("logs")
+        run("logs", entry)
       end
 
       private
@@ -98,6 +159,8 @@ module Brunch
         }
         system(environment, "sh", "-lc", command, chdir: entry.fetch("snapshot"))
       end
+
+      def command?(action) = @configuration.fetch("commands").key?(action)
     end
 
     module_function
@@ -105,6 +168,7 @@ module Brunch
     def build(configuration)
       case configuration.fetch("manager")
       when "docker_compose" then DockerCompose.new(configuration)
+      when "podman_compose" then PodmanCompose.new(configuration)
       when "command" then Command.new(configuration)
       else abort "Unknown Brunch manager: #{configuration.fetch("manager")}."
       end
