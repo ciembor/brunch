@@ -13,6 +13,8 @@ module Brunch
 
       def available? = true
 
+      def create(_entry) = true
+
       def port_available?(port)
         socket = TCPSocket.new("127.0.0.1", port)
         socket.close
@@ -75,6 +77,7 @@ module Brunch
     # Runs project-provided commands, making Brunch compatible with tools such
     # as Podman, Kubernetes wrappers, Foreman, or custom process supervisors.
     class Command < Base
+      def create(entry) = run("create", entry, optional: true)
       def start(entry) = run("start", entry)
       def stop(entry) = run("stop", entry)
       def remove(entry)
@@ -83,8 +86,10 @@ module Brunch
 
       private
 
-      def run(action, entry)
-        command = @configuration.fetch("commands").fetch(action)
+      def run(action, entry, optional: false)
+        command = @configuration.fetch("commands")[action]
+        return true if optional && !command
+        abort "Missing commands.#{action} for the command manager." unless command
         environment = {
           "BRUNCH_REF" => entry.fetch("ref", ""),
           "BRUNCH_PORT" => entry.fetch("port").to_s,

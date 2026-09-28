@@ -148,6 +148,7 @@ module Brunch
       if configuration.fetch("manager") == "docker_compose" && !File.file?(File.join(entry.fetch("snapshot"), entry.fetch("compose_file")))
         abort "Missing #{entry.fetch("compose_file")} in #{ref}."
       end
+      abort "Could not create environment for #{ref}." unless manager.create(entry)
       abort "Could not start environment for #{ref}." unless manager.start(entry)
       data.fetch("environments")[ref] = entry
       save_state(data)

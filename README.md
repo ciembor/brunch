@@ -63,16 +63,19 @@ and `BRUNCH_SNAPSHOT`.
 ```yaml
 manager: command
 commands:
+  create: bin/environment create
   start: bin/environment start
   stop: bin/environment stop
   remove: bin/environment remove
 ```
 
-`start` must return after it has launched the environment (for example, by
-delegating to a daemon or supervisor). `stop` is used when switching branches;
-`remove` is used only when a Git ref has been deleted and should remove any
-manager-owned persistent resources. This makes the adapter suitable for Podman,
-Kubernetes wrappers, Foreman/Overmind wrappers, or a project-specific script.
+`create` provisions manager-owned resources after Brunch has created the
+snapshot; it is optional for the `command` manager. `start` must return after
+it has launched the environment (for example, by delegating to a daemon or
+supervisor). `stop` is used when switching branches; `remove` is used only when
+a Git ref has been deleted and should remove any manager-owned persistent
+resources. This makes the adapter suitable for Podman, Kubernetes wrappers,
+Foreman/Overmind wrappers, or a project-specific script.
 
 ## Lifecycle
 

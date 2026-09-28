@@ -21,10 +21,11 @@ class BrunchTest < Minitest::Test
       Dir.mkdir(snapshot)
       manager = Brunch::Managers.build(
         "manager" => "command",
-        "commands" => { "start" => "true", "stop" => "true", "remove" => "true" }
+        "commands" => { "create" => "true", "start" => "true", "stop" => "true", "remove" => "true" }
       )
       entry = { "ref" => "main", "port" => 3000, "project" => "brunch-main", "snapshot" => snapshot }
 
+      assert manager.create(entry)
       assert manager.start(entry)
       assert manager.stop(entry)
       assert manager.remove(entry)
