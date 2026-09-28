@@ -9,6 +9,7 @@ require "yaml"
 module Brunch
   class CLI
     PORT_RANGE = (1024..49_151)
+    class ConfigurationError < StandardError; end
 
     class << self
       def start(arguments)
@@ -18,6 +19,8 @@ module Brunch
 
     def start(arguments)
       Dir.chdir(repo_root)
+      lock = acquire_lock
+      return 75 unless lock
 
       case arguments
       in ["activate"] then activate
@@ -25,20 +28,41 @@ module Brunch
       in ["stop"] then stop_active_environment(state)
       in ["restart"] then restart_active_environment(state)
       in ["status"] then show_status(state)
-      in ["logs"] then show_logs(state)
+      in ["logs", *log_arguments] then show_logs(state, log_arguments)
+      in ["exec", "--", *command] if !command.empty? then execute_active_environment(state, command)
+      in ["doctor"] then doctor(state)
       in ["cleanup"] then cleanup(state)
       in ["register", _ref] then cleanup(state)
       in ["install"] then Hooks.install
       in ["version"] | ["--version"] | ["-v"] then puts Brunch::VERSION
       else
-        warn "Usage: brunch {install|activate|start <ref>|stop|restart|status|logs|cleanup|register <ref>|version}"
+        warn "Usage: brunch {install|activate|start <ref>|stop|restart|status|logs [args]|exec -- <cmd>|doctor|cleanup|register <ref>|version}"
         return 64
       end
 
       0
+    rescue ConfigurationError => error
+      warn error.message
+      64
+    ensure
+      release_lock(lock) if defined?(lock) && lock
     end
 
     private
+
+    def acquire_lock
+      FileUtils.mkdir_p(state_root)
+      lock = File.open(File.join(state_root, "lock"), "w")
+      return lock if lock.flock(File::LOCK_EX | File::LOCK_NB)
+      lock.close
+      warn "Another Brunch command is already running."
+      nil
+    end
+
+    def release_lock(lock)
+      lock.flock(File::LOCK_UN)
+      lock.close
+    end
 
     def git_output(*arguments)
       output, status = Open3.capture2("git", *arguments)
@@ -64,7 +88,15 @@ module Brunch
 
     def save_state(value)
       FileUtils.mkdir_p(state_root)
-      File.write(state_path, JSON.pretty_generate(value))
+      temporary_path = "#{state_path}.#{Process.pid}.tmp"
+      File.open(temporary_path, "w", 0o600) do |file|
+        file.write(JSON.pretty_generate(value))
+        file.flush
+        file.fsync
+      end
+      File.rename(temporary_path, state_path)
+    ensure
+      FileUtils.rm_f(temporary_path) if defined?(temporary_path)
     end
 
     def configuration
@@ -160,6 +192,14 @@ module Brunch
       save_state(data)
     end
 
+    def recover_pending_environment(data)
+      pending = data.delete("pending")
+      return unless pending
+      manager.reset(pending)
+      save_state(data)
+      warn "Recovered interrupted environment setup for #{pending.fetch("ref", "unknown")}."
+    end
+
     def active_entry(data)
       ref = data["active_ref"]
       return [nil, nil] unless ref && data.fetch("environments").key?(ref)
@@ -196,10 +236,30 @@ module Brunch
       end
     end
 
-    def show_logs(data)
+    def show_logs(data, arguments)
       _ref, entry = active_entry(data)
       return warn "No active Brunch environment." unless entry
-      manager.logs(entry)
+      manager.logs(entry, *arguments)
+    end
+
+    def execute_active_environment(data, command)
+      _ref, entry = active_entry(data)
+      return warn "No active Brunch environment." unless entry
+      abort "Command failed: #{command.join(" ")}" unless system(manager.environment(entry), *command, chdir: entry.fetch("snapshot"))
+    end
+
+    def doctor(data)
+      hooks_dir = git_output("rev-parse", "--git-path", "hooks")
+      ports = data.fetch("environments").values.map { |entry| entry.fetch("port") }
+      checks = {
+        "Git repository" => !repo_root.empty?,
+        "Git hooks" => Hooks::EVENTS.all? { |event| File.file?(File.join(hooks_dir, event)) },
+        "Configuration" => !!configuration,
+        "#{configuration.fetch("manager")} availability" => manager.available?,
+        "Unique environment ports" => ports.uniq.size == ports.size
+      }
+      checks.each { |name, passed| puts "#{passed ? "OK" : "FAIL"} #{name}" }
+      abort "Brunch doctor found problems." unless checks.values.all?
     end
 
     def start_environment(ref, data)
@@ -211,18 +271,22 @@ module Brunch
       entry = { "ref" => ref, "project" => "brunch-#{identifier(ref)}", "port" => port, "snapshot" => snapshot_path(ref), "compose_file" => configuration.fetch("compose_file") }
       manager.reset(existing) if existing
       archive_ref(ref, entry.fetch("snapshot"))
-      if configuration.fetch("manager") == "docker_compose" && !File.file?(File.join(entry.fetch("snapshot"), entry.fetch("compose_file")))
+      if %w[docker_compose podman_compose].include?(configuration.fetch("manager")) && !File.file?(File.join(entry.fetch("snapshot"), entry.fetch("compose_file")))
         abort "Missing #{entry.fetch("compose_file")} in #{ref}."
       end
+      data["pending"] = entry
+      save_state(data)
       abort "Could not create environment for #{ref}." unless manager.create(entry)
       abort "Could not start environment for #{ref}." unless manager.start(entry)
       data.fetch("environments")[ref] = entry
+      data.delete("pending")
       save_state(data)
       puts "Started #{entry.fetch("project")} for #{ref} at http://127.0.0.1:#{port}"
     end
 
     def activate
       data = state
+      recover_pending_environment(data)
       cleanup(data)
       current_ref = git_output("branch", "--show-current")
       return if current_ref.empty?

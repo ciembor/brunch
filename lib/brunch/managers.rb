@@ -15,6 +15,15 @@ module Brunch
 
       def create(_entry) = true
 
+      def environment(entry)
+        {
+          "BRUNCH_REF" => entry.fetch("ref", ""),
+          "BRUNCH_PORT" => entry.fetch("port").to_s,
+          "BRUNCH_PROJECT" => entry.fetch("project"),
+          "BRUNCH_SNAPSHOT" => entry.fetch("snapshot")
+        }
+      end
+
       def port_available?(port)
         socket = TCPSocket.new("127.0.0.1", port)
         socket.close
@@ -29,7 +38,7 @@ module Brunch
 
       def healthy?(_entry) = nil
 
-      def logs(_entry)
+      def logs(_entry, *_arguments)
         warn "Logs are not supported by this manager."
         false
       end
@@ -64,7 +73,10 @@ module Brunch
         status.success? && !output.strip.empty?
       end
 
-      def logs(entry) = compose(entry, "logs", "--tail", "100")
+      def logs(entry, *arguments)
+        arguments = ["--tail", "100"] if arguments.empty?
+        compose(entry, "logs", *arguments)
+      end
 
       def port_available?(port)
         ports, = Open3.capture2(*ports_command)
@@ -98,7 +110,7 @@ module Brunch
       def ports_command = ["docker", "ps", "--format", "{{.Ports}}"]
 
       def compose(entry, *arguments)
-        system({ "BRUNCH_PORT" => entry.fetch("port").to_s }, *compose_command(entry, *arguments))
+        system(environment(entry), *compose_command(entry, *arguments))
       end
     end
 
@@ -117,7 +129,7 @@ module Brunch
       def ports_command = ["podman", "ps", "--format", "{{.Ports}}"]
 
       def compose(entry, *arguments)
-        system({ "BRUNCH_PORT" => entry.fetch("port").to_s }, *compose_command(entry, *arguments))
+        system(environment(entry), *compose_command(entry, *arguments))
       end
     end
 
@@ -142,7 +154,8 @@ module Brunch
       def status(entry) = running?(entry) ? "running" : "stopped"
       def healthy?(entry) = running?(entry)
 
-      def logs(entry)
+      def logs(entry, *arguments)
+        return super(entry, *arguments) unless arguments.empty?
         path = entry["log_path"]
         return super unless path && File.file?(path)
         puts File.readlines(path).last(100)
@@ -158,14 +171,6 @@ module Brunch
         false
       end
 
-      def environment(entry)
-        {
-          "BRUNCH_REF" => entry.fetch("ref", ""),
-          "BRUNCH_PORT" => entry.fetch("port").to_s,
-          "BRUNCH_PROJECT" => entry.fetch("project"),
-          "BRUNCH_SNAPSHOT" => entry.fetch("snapshot")
-        }
-      end
     end
 
     # Runs project-provided commands, making Brunch compatible with tools such
@@ -187,24 +192,18 @@ module Brunch
         run("health", entry)
       end
 
-      def logs(entry)
-        return super unless command?("logs")
-        run("logs", entry)
+      def logs(entry, *arguments)
+        return super(entry, *arguments) unless command?("logs")
+        run("logs", entry, arguments: arguments)
       end
 
       private
 
-      def run(action, entry, optional: false)
+      def run(action, entry, optional: false, arguments: [])
         command = @configuration.fetch("commands")[action]
         return true if optional && !command
         abort "Missing commands.#{action} for the command manager." unless command
-        environment = {
-          "BRUNCH_REF" => entry.fetch("ref", ""),
-          "BRUNCH_PORT" => entry.fetch("port").to_s,
-          "BRUNCH_PROJECT" => entry.fetch("project"),
-          "BRUNCH_SNAPSHOT" => entry.fetch("snapshot")
-        }
-        system(environment, "sh", "-lc", command, chdir: entry.fetch("snapshot"))
+        system(environment(entry), "sh", "-lc", command, "brunch", *arguments, chdir: entry.fetch("snapshot"))
       end
 
       def command?(action) = @configuration.fetch("commands").key?(action)

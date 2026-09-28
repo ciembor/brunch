@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 - 2026-09-28
+
+- Add `doctor`, `exec`, and argument forwarding for `logs`.
+- Serialize commands with a repository-local lock, save state atomically, and
+  recover interrupted environment setup on the next activation.
+- Add conditional Docker Compose and Podman Compose integration tests to CI.
+
 ## 0.3.0 - 2026-09-28
 
 - Add a native `local_process` manager for `bin/dev`-style commands, with PID

@@ -18,3 +18,19 @@ jobs:
           bundler-cache: true
       - run: bundle exec rake test
       - run: gem build brunch.gemspec
+
+  manager-integration:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        manager: [docker_compose, podman_compose]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - if: matrix.manager == 'podman_compose'
+        run: sudo apt-get update && sudo apt-get install -y podman podman-compose
+      - run: BRUNCH_INTEGRATION_MANAGER=${{ matrix.manager }} bundle exec ruby -Itest test/manager_integration_test.rb

@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    brunch (0.3.0)
+    brunch (0.4.0)
 
 GEM
   remote: https://rubygems.org/

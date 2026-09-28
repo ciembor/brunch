@@ -131,8 +131,14 @@ brunch status    # active/sleeping environments, manager status, health, port
 brunch stop      # stop the active environment without deleting it
 brunch restart   # recreate and start the active environment
 brunch logs      # show the last 100 logs (or run commands.logs)
+brunch logs --follow
+brunch exec -- bin/rails console
+brunch doctor    # verify Git, installed hooks, configuration, manager and ports
 brunch cleanup   # delete environments whose Git refs no longer exist
 ```
+
+Brunch serializes commands with `.git/brunch/lock`, writes `state.json`
+atomically, and removes an interrupted pending setup on the next activation.
 
 ## Development
 
