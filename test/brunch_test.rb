@@ -67,6 +67,23 @@ class BrunchTest < Minitest::Test
     end
   end
 
+  def test_ports_marks_the_active_branch_and_port_prints_only_its_port
+    cli = Brunch::CLI.new
+    data = {
+      "active_ref" => "feature",
+      "environments" => {
+        "feature" => { "port" => 3001 },
+        "main" => { "port" => 3000 }
+      }
+    }
+
+    ports, = capture_io { cli.send(:show_ports, data) }
+    port, = capture_io { cli.send(:show_active_port, data) }
+
+    assert_equal "● feature                        3001\n○ main                           3000\n", ports
+    assert_equal "3001\n", port
+  end
+
   def test_active_only_stops_every_non_current_environment
     Dir.mktmpdir do |directory|
       original_directory = Dir.pwd

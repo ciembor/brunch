@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 - 2026-09-28
+
+- Add `ports` and script-friendly `port` commands.
+
 ## 0.4.1 - 2026-09-28
 
 - Strengthen `doctor` hook and port validation.

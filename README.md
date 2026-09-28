@@ -128,6 +128,8 @@ the cleanup.
 
 ```sh
 brunch status    # active/sleeping environments, manager status, health, port
+brunch ports     # branch-to-port list; active branch is marked in green
+brunch port      # only the active branch port, suitable for scripts
 brunch stop      # stop the active environment without deleting it
 brunch restart   # recreate and start the active environment
 brunch logs      # show the last 100 logs (or run commands.logs)

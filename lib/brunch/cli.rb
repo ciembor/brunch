@@ -28,6 +28,8 @@ module Brunch
       in ["stop"] then stop_active_environment(state)
       in ["restart"] then restart_active_environment(state)
       in ["status"] then show_status(state)
+      in ["ports"] then show_ports(state)
+      in ["port"] then show_active_port(state)
       in ["logs", *log_arguments] then show_logs(state, log_arguments)
       in ["exec", "--", *command] if !command.empty? then execute_active_environment(state, command)
       in ["doctor"] then doctor(state)
@@ -36,7 +38,7 @@ module Brunch
       in ["install"] then Hooks.install
       in ["version"] | ["--version"] | ["-v"] then puts Brunch::VERSION
       else
-        warn "Usage: brunch {install|activate|start <ref>|stop|restart|status|logs [args]|exec -- <cmd>|doctor|cleanup|register <ref>|version}"
+        warn "Usage: brunch {install|activate|start <ref>|stop|restart|status|ports|port|logs [args]|exec -- <cmd>|doctor|cleanup|register <ref>|version}"
         return 64
       end
 
@@ -236,10 +238,36 @@ module Brunch
       end
     end
 
+    def show_ports(data)
+      environments = data.fetch("environments")
+      if environments.empty?
+        puts "No Brunch environments."
+        return
+      end
+
+      environments.sort.each do |ref, entry|
+        active = ref == data["active_ref"]
+        marker = active ? color("●", 32) : "○"
+        name = active ? color(ref.ljust(30), 32) : ref.ljust(30)
+        puts "#{marker} #{name} #{entry.fetch("port")}"
+      end
+    end
+
+    def show_active_port(data)
+      _ref, entry = active_entry(data)
+      return warn "No active Brunch environment." unless entry
+      puts entry.fetch("port")
+    end
+
     def show_logs(data, arguments)
       _ref, entry = active_entry(data)
       return warn "No active Brunch environment." unless entry
       manager.logs(entry, *arguments)
+    end
+
+    def color(text, code)
+      return text unless $stdout.tty?
+      "\e[#{code}m#{text}\e[0m"
     end
 
     def execute_active_environment(data, command)
