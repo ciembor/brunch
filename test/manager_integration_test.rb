@@ -7,12 +7,15 @@ require_relative "../lib/brunch"
 class ManagerIntegrationTest < Minitest::Test
   def test_compose_manager_lifecycle
     manager_name = ENV.fetch("BRUNCH_INTEGRATION_MANAGER") { skip "Set BRUNCH_INTEGRATION_MANAGER to run integration tests." }
-    Dir.mktmpdir do |snapshot|
+    Dir.mktmpdir do |directory|
+      snapshot = File.join(directory, "snapshot")
+      Dir.mkdir(snapshot)
       File.write(File.join(snapshot, "compose.yaml"), <<~YAML)
         services:
           web:
             image: alpine:3.20
             command: sh -c 'sleep 30'
+            stop_grace_period: 1s
       YAML
       manager = Brunch::Managers.build("manager" => manager_name)
       skip "#{manager_name} is unavailable" unless manager.available?
