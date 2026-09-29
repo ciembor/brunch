@@ -16,7 +16,7 @@ Gem::Specification.new do |spec|
     "changelog_uri" => "#{spec.homepage}/blob/main/CHANGELOG.md",
     "rubygems_mfa_required" => "true"
   }
-  spec.files = Dir.glob("{lib,exe}/**/*") + %w[README.md LICENSE.txt CHANGELOG.md]
+  spec.files = Dir.glob("{lib,exe}/**/*") + %w[README.md brunch.webp LICENSE.txt CHANGELOG.md]
   spec.bindir = "exe"
   spec.executables = ["brunch"]
   spec.add_development_dependency "minitest", "~> 5.0"

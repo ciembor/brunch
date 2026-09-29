@@ -51,7 +51,7 @@ class WorktreeContractTest < Minitest::Test
   def with_repo
     Dir.mktmpdir("brunch-worktree-test") do |directory|
       root = File.realpath(directory)
-      assert system("git", "-C", root, "init", "--quiet", out: File::NULL)
+      assert system("git", "-C", root, "init", "--quiet", "-b", "main", out: File::NULL)
       assert system("git", "-C", root, "config", "user.email", "test@example.com")
       assert system("git", "-C", root, "config", "user.name", "Test")
       File.write(File.join(root, "brunch.yml"), <<~YAML)

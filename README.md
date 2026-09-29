@@ -21,13 +21,16 @@ including uncommitted changes when the manager rebuilds or reloads the app.
 
 ## Installation
 
+Install [`git-hooks-ext`](https://github.com/ciembor/git-hooks-ext) so that
+`ghe` is on your `PATH`, then install Brunch:
+
 ```sh
 gem install brunch
-brunch install
 ```
 
-`brunch install` installs the `git-hooks-ext` bridge and the project-local
-hooks. It refuses to replace an existing hook owned by another tool.
+Run `brunch install` inside each Git repository you want Brunch to manage.
+It installs the `git-hooks-ext` bridge and project-local hooks, and refuses
+to replace an existing hook owned by another tool.
 
 ## Project configuration
 
@@ -58,6 +61,42 @@ receive a different free port; running containers can never bind the same host
 address and port. To prefer another starting port, set `preferred_port: 4000`.
 Brunch persists assignments privately in `.git/brunch/state.json`.
 
+## Using Brunch
+
+First, commit `brunch.yml` and your Compose file (or the configuration for
+another manager). The repository needs at least one commit before Brunch can
+start an environment. Install the hooks once per repository, then activate
+the checked-out branch:
+
+```sh
+brunch install
+brunch doctor
+brunch activate
+brunch status
+brunch port
+```
+
+Open `http://127.0.0.1:3000` if port 3000 is free, or use the port printed by
+`brunch activate` / `brunch port`. Brunch starts the application in the
+background. With Compose, the app must listen on the container port mapped in
+`compose.yaml`.
+
+### Branches in one checkout
+
+Once the hooks are installed, ordinary Git branch switches stop the old
+environment and start the new one automatically:
+
+```sh
+git switch -c feature/login
+brunch status
+git switch main
+```
+
+Both branches use this checkout's assigned host port. With Compose, they keep
+separate projects and volumes. To start the checked-out branch manually (for
+example, after `brunch stop`), run `brunch activate`. Run `brunch restart` to
+rebuild it after changing files that are copied into the image.
+
 ### Parallel worktrees
 
 There is no mode switch. Commit the same `brunch.yml` in your repository, then
@@ -71,6 +110,11 @@ cd ../feature-a
 brunch port        # port for this worktree
 brunch ports       # ports for all worktrees
 ```
+
+Each worktree runs independently on a different host port, so `feature-a` and
+`feature-b` can be used at the same time. Run `brunch status` or `brunch port`
+inside each worktree to find its address. Switching branches inside one
+worktree does not stop the others.
 
 `ghe worktree add`, `move`, and `remove` emit lifecycle events. Git's
 `post-checkout` hook handles branch changes inside any worktree, including the

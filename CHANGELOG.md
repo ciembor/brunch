@@ -2,11 +2,16 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-09-29
+
 - Use one worktree-based lifecycle for both branch switches and parallel
   worktrees. Branches within a worktree reuse its port; separate worktrees
   receive distinct host ports.
 - Run applications from the live worktree and replace mode-specific port
   settings with an optional `preferred_port`.
+- Document installation and everyday use, and add a compact illustration to
+  the README.
+- Make CI lint only project files and initialize the test repository on `main`.
 
 ## 0.7.1 - 2026-09-29
 

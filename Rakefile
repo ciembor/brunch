@@ -15,7 +15,7 @@ task default: :test
 
 namespace :quality do
   task :lint do
-    run_quality_command "bundle", "exec", "rubocop"
+    run_quality_command "bundle", "exec", "rubocop", "lib", "exe", "test", "Rakefile"
   end
 
   task :reek do
