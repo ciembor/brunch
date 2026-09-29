@@ -49,9 +49,27 @@ services:
       - "127.0.0.1:${BRUNCH_PORT}:3000"
 ```
 
-The first port is deterministically selected from the IANA registered range
-`1024-49151`. If it is occupied, Brunch prompts for a free replacement and
-persists that selection privately in `.git/brunch/state.json`.
+In `unique` mode, the first port is deterministically selected from the IANA
+registered range `1024-49151`. If it is occupied, Brunch prompts for a free
+replacement and persists that selection privately in `.git/brunch/state.json`.
+
+### Port modes
+
+The default `shared` mode uses `127.0.0.1:3000` for every branch. It stops all
+other environments before starting one, so stopped containers, networks, and
+volumes remain isolated without holding the host port.
+
+```yaml
+port_mode: shared
+shared_port: 3000
+```
+
+Use `unique` to retain a different persistent port for each branch and permit
+parallel environments:
+
+```yaml
+port_mode: unique
+```
 
 ### Custom manager commands
 

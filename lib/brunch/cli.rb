@@ -103,8 +103,9 @@ module Brunch
 
     def configuration
       path = File.join(repo_root, "brunch.yml")
-      value = { "manager" => "docker_compose", "compose_file" => "compose.yaml", "lifecycle" => "switch_only" }
-      value.merge!(YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}) if File.file?(path)
+      configured = File.file?(path) ? YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {} : {}
+      value = { "manager" => "docker_compose", "compose_file" => "compose.yaml", "port_mode" => "shared", "shared_port" => 3000 }.merge(configured)
+      value["lifecycle"] ||= value["port_mode"] == "shared" ? "active_only" : "switch_only"
       validate_configuration!(value)
       value
     end
@@ -114,7 +115,11 @@ module Brunch
     def validate_configuration!(value)
       abort "brunch.yml must contain a mapping." unless value.is_a?(Hash)
       abort "Unknown Brunch manager: #{value["manager"]}." unless %w[docker_compose podman_compose local_process command].include?(value["manager"])
+      abort "Unknown Brunch port mode: #{value["port_mode"]}." unless %w[shared unique].include?(value["port_mode"])
       abort "Unknown Brunch lifecycle: #{value["lifecycle"]}." unless %w[switch_only active_only].include?(value["lifecycle"])
+      if value["port_mode"] == "shared" && (!value["shared_port"].is_a?(Integer) || !PORT_RANGE.cover?(value["shared_port"]))
+        abort "shared_port must be a number from #{PORT_RANGE.begin} to #{PORT_RANGE.end}."
+      end
       if %w[docker_compose podman_compose].include?(value["manager"]) && (!value["compose_file"].is_a?(String) || value["compose_file"].empty?)
         abort "compose_file must be a non-empty string."
       end
@@ -151,6 +156,11 @@ module Brunch
     end
 
     def choose_port(ref, saved_port)
+      if configuration.fetch("port_mode") == "shared"
+        port = configuration.fetch("shared_port")
+        abort "Shared port #{port} is already in use." unless port_available?(port)
+        return port
+      end
       preferred = saved_port || preferred_port(ref)
       return preferred if port_available?(preferred)
       suggested = (preferred + 1..PORT_RANGE.end).find { |port| port_available?(port) } || PORT_RANGE.find { |port| port_available?(port) }
@@ -288,7 +298,7 @@ module Brunch
         "Git hooks" => hooks_installed,
         "Configuration" => !!configuration,
         "#{configuration.fetch("manager")} availability" => manager.available?,
-        "Unique environment ports" => ports.uniq.size == ports.size,
+        "Port assignment" => configuration.fetch("port_mode") == "shared" ? ports.all? { |port| port == configuration.fetch("shared_port") } : ports.uniq.size == ports.size,
         "Environment port range" => ports.all? { |port| PORT_RANGE.cover?(port) }
       }
       checks.each { |name, passed| puts "#{passed ? "OK" : "FAIL"} #{name}" }
@@ -298,6 +308,7 @@ module Brunch
     def start_environment(ref, data)
       return warn "#{configuration.fetch("manager")} is not available; skipped environment for #{ref}." unless manager.available?
       return warn "#{ref} does not resolve to a commit; skipped environment." unless ref_exists?(ref)
+      sleep_other_environments(data, ref) if configuration.fetch("port_mode") == "shared"
       existing = data.fetch("environments")[ref]
       port = choose_port(ref, existing&.fetch("port", nil))
       return warn "No port selected for #{ref}." unless port
@@ -325,13 +336,17 @@ module Brunch
       return if current_ref.empty?
       previous_ref = data["active_ref"]
       if configuration.fetch("lifecycle") == "active_only"
-        data.fetch("environments").each { |ref, entry| manager.stop(entry) if ref != current_ref }
+        sleep_other_environments(data, current_ref)
       elsif previous_ref && previous_ref != current_ref && data.fetch("environments").key?(previous_ref)
         manager.stop(data.fetch("environments")[previous_ref])
       end
       start_environment(current_ref, data)
       data["active_ref"] = current_ref
       save_state(data)
+    end
+
+    def sleep_other_environments(data, active_ref)
+      data.fetch("environments").each { |ref, entry| manager.stop(entry) if ref != active_ref }
     end
   end
 end

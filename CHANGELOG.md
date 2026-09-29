@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 - 2026-09-29
+
+- Add shared and unique port modes; shared port `3000` is now the default.
+
 ## 0.5.0 - 2026-09-28
 
 - Add `ports` and script-friendly `port` commands.

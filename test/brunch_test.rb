@@ -101,7 +101,7 @@ class BrunchTest < Minitest::Test
       events = []
       manager = FakeManager.new(events)
       cli = Brunch::CLI.new
-      cli.define_singleton_method(:configuration) { { "manager" => "command", "lifecycle" => "active_only", "compose_file" => "compose.yaml" } }
+      cli.define_singleton_method(:configuration) { { "manager" => "command", "lifecycle" => "active_only", "port_mode" => "unique", "compose_file" => "compose.yaml" } }
       cli.define_singleton_method(:manager) { manager }
       cli.define_singleton_method(:choose_port) { |_ref, _saved_port| 45_000 }
       cli.send(:save_state, {
