@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repository_root="$(git rev-parse --show-toplevel)"
+hook_path="$(git rev-parse --git-path hooks/pre-commit)"
+source_path="$repository_root/bin/pre-commit"
+marker="# Brunch quality pre-commit hook"
+
+if [ -e "$hook_path" ] || [ -L "$hook_path" ]; then
+  if [ -L "$hook_path" ]; then
+    if [ "$(realpath "$hook_path" 2>/dev/null || true)" != "$(realpath "$source_path")" ]; then
+      echo "Refusing to replace existing pre-commit hook: $hook_path" >&2
+      exit 1
+    fi
+    unlink "$hook_path"
+  elif ! grep -Fq "$marker" "$hook_path"; then
+    echo "Refusing to replace existing pre-commit hook: $hook_path" >&2
+    exit 1
+  fi
+fi
+
+mkdir -p "$(dirname "$hook_path")"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  "$marker" \
+  'set -euo pipefail' \
+  'repository_root="$(git rev-parse --show-toplevel)"' \
+  'exec "$repository_root/bin/pre-commit" "$@"' > "$hook_path"
+chmod +x "$hook_path"
+echo "Installed Brunch quality pre-commit hook."

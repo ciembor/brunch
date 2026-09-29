@@ -36,7 +36,7 @@ module Brunch
 
       def status(_entry) = "unknown"
 
-      def healthy?(_entry) = nil
+      def healthy?(_entry) = false
 
       def logs(_entry, *_arguments)
         warn "Logs are not supported by this manager."
@@ -69,11 +69,13 @@ module Brunch
 
       def status(entry)
         return "unavailable" unless available?
+
         healthy?(entry) ? "running" : "stopped"
       end
 
       def healthy?(entry)
         return false unless available?
+
         output, status = Open3.capture2(*compose_command(entry, "ps", "--status", "running", "--quiet"))
         status.success? && !output.strip.empty?
       end
@@ -101,6 +103,7 @@ module Brunch
 
       def remove(entry)
         return false unless available? && compose(entry, "down", "--volumes", "--remove-orphans")
+
         remove_managed_files(entry)
         true
       end
@@ -110,7 +113,8 @@ module Brunch
       def compose_command(entry, *arguments)
         directory = compose_directory(entry)
         compose_file = File.join(directory, entry.fetch("compose_file"))
-        ["docker", "compose", "--project-name", entry.fetch("project"), "--project-directory", directory, "--file", compose_file, *arguments]
+        ["docker", "compose", "--project-name", entry.fetch("project"), "--project-directory", directory, "--file",
+         compose_file, *arguments]
       end
 
       def compose_directory(entry)
@@ -149,7 +153,9 @@ module Brunch
       def start(entry)
         log_directory = entry["source_type"] == "worktree" ? entry.fetch("control") : entry.fetch("snapshot")
         log_path = File.join(log_directory, ".brunch.log")
-        entry["pid"] = Process.spawn(environment(entry), "sh", "-lc", @configuration.fetch("command"), chdir: entry.fetch("snapshot"), out: [log_path, "a"], err: [log_path, "a"], pgroup: true)
+        entry["pid"] =
+          Process.spawn(environment(entry), "sh", "-lc", @configuration.fetch("command"), chdir: entry.fetch("snapshot"),
+                                                                                          out: [log_path, "a"], err: [log_path, "a"], pgroup: true)
         entry["log_path"] = log_path
         Process.detach(entry.fetch("pid"))
         true
@@ -158,6 +164,7 @@ module Brunch
       def stop(entry)
         pid = entry["pid"]
         return true unless pid
+
         Process.kill("TERM", -pid)
         true
       rescue Errno::ESRCH
@@ -168,9 +175,11 @@ module Brunch
       def healthy?(entry) = running?(entry)
 
       def logs(entry, *arguments)
-        return super(entry, *arguments) unless arguments.empty?
+        return super unless arguments.empty?
+
         path = entry["log_path"]
         return super unless path && File.file?(path)
+
         puts File.readlines(path).last(100)
         true
       end
@@ -183,7 +192,6 @@ module Brunch
       rescue Errno::ESRCH
         false
       end
-
     end
 
     # Runs project-provided commands, making Brunch compatible with tools such
@@ -192,21 +200,28 @@ module Brunch
       def create(entry) = run("create", entry, optional: true)
       def start(entry) = run("start", entry)
       def stop(entry) = run("stop", entry)
+
       def remove(entry)
         run("remove", entry) && super
       end
 
       def status(entry)
-        command?("status") ? (run("status", entry) ? "running" : "stopped") : "unknown"
+        if command?("status")
+          run("status", entry) ? "running" : "stopped"
+        else
+          "unknown"
+        end
       end
 
       def healthy?(entry)
-        return nil unless command?("health")
+        return false unless command?("health")
+
         run("health", entry)
       end
 
       def logs(entry, *arguments)
-        return super(entry, *arguments) unless command?("logs")
+        return super unless command?("logs")
+
         run("logs", entry, arguments: arguments)
       end
 
@@ -215,8 +230,14 @@ module Brunch
       def run(action, entry, optional: false, arguments: [])
         command = @configuration.fetch("commands")[action]
         return true if optional && !command
+
         abort "Missing commands.#{action} for the command manager." unless command
-        directory = File.directory?(entry.fetch("snapshot")) ? entry.fetch("snapshot") : entry.fetch("control", entry.fetch("snapshot"))
+        directory = if File.directory?(entry.fetch("snapshot"))
+                      entry.fetch("snapshot")
+                    else
+                      entry.fetch("control",
+                                  entry.fetch("snapshot"))
+                    end
         system(environment(entry), "sh", "-lc", command, "brunch", *arguments, chdir: directory)
       end
 
@@ -231,7 +252,7 @@ module Brunch
       when "podman_compose" then PodmanCompose.new(configuration)
       when "local_process" then LocalProcess.new(configuration)
       when "command" then Command.new(configuration)
-      else abort "Unknown Brunch manager: #{configuration.fetch("manager")}."
+      else abort "Unknown Brunch manager: #{configuration.fetch('manager')}."
       end
     end
   end

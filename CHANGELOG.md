@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Use one worktree-based lifecycle for both branch switches and parallel
+  worktrees. Branches within a worktree reuse its port; separate worktrees
+  receive distinct host ports.
+- Run applications from the live worktree and replace mode-specific port
+  settings with an optional `preferred_port`.
+
 ## 0.7.1 - 2026-09-29
 
 - Use a compatible Podman Compose provider and CLI arguments in integration

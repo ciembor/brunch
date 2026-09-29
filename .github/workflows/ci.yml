@@ -23,23 +23,30 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-      - run: bundle exec rake test
+      - run: bundle exec rake quality
       - run: gem build brunch.gemspec
 
   manager-integration:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         manager: [docker_compose, podman_compose]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ciembor/git-hooks-ext
+          ref: v0.5.0
+          path: git-hooks-ext
+      - run: make -C git-hooks-ext
+      - run: echo "$GITHUB_WORKSPACE/git-hooks-ext" >> "$GITHUB_PATH"
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.4"
           bundler-cache: true
       - if: matrix.manager == 'podman_compose'
         run: sudo apt-get update && sudo apt-get install -y podman podman-compose
-      - run: BRUNCH_INTEGRATION_MANAGER=${{ matrix.manager }} bundle exec ruby -Itest test/manager_integration_test.rb
+      - run: BRUNCH_INTEGRATION_MANAGER=${{ matrix.manager }} bundle exec rake test
         env:
           PODMAN_COMPOSE_PROVIDER: ${{ matrix.manager == 'podman_compose' && '/usr/bin/podman-compose' || '' }}

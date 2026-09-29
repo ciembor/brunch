@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repository_root="$(git rev-parse --show-toplevel)"
+cd "$repository_root"
+
+# Git passes its own index paths to hooks; tests create independent repositories.
+while IFS= read -r git_variable; do
+  unset "$git_variable"
+done < <(git rev-parse --local-env-vars)
+
+if command -v rbenv >/dev/null 2>&1; then
+  bundle_command=(rbenv exec bundle)
+else
+  bundle_command=(bundle)
+fi
+
+"${bundle_command[@]}" exec rubocop --autocorrect-all
+"${bundle_command[@]}" exec rake quality
+
+if ! git diff --quiet -- . ':!coverage'; then
+  echo "RuboCop corrected files. Review and stage them, then commit again." >&2
+  exit 1
+fi

@@ -4,27 +4,20 @@ require "digest"
 
 module Brunch
   module WorktreeMode
-    def worktree_command?(arguments)
-      return true if arguments.first == "worktree-event"
-      return false if %w[version --version -v install].include?(arguments.first)
-      return true unless state.fetch("worktrees", {}).empty?
-      configuration.fetch("mode") == "worktrees"
-    end
-
     def worktree_command(arguments)
       case arguments
       in ["worktree-event", "worktree-created", path, *_]
-        worktree_activate(path) if File.directory?(path) && configuration(root: path).fetch("mode") == "worktrees"
+        worktree_activate(path) if File.directory?(path)
       in ["worktree-event", "worktree-removed" | "worktree-pruned", path, *_]
         worktree_remove(path)
       in ["worktree-event", "worktree-moved", old_path, new_path, *_]
         worktree_move(old_path, new_path)
       in ["worktree-event", "worktree-repaired", path, *_]
-        worktree_repair(path) if File.directory?(path) && configuration(root: path).fetch("mode") == "worktrees"
+        worktree_repair(path) if File.directory?(path)
       in ["activate"] then worktree_activate(repo_root)
       in ["restart"] then worktree_activate(repo_root, force: true)
       in ["start", ref]
-        abort "In worktree mode, start the checked-out branch from its worktree." unless ref == worktree_ref(repo_root).first
+        abort "Start the checked-out branch from its worktree." unless ref == worktree_ref(repo_root).first
         worktree_activate(repo_root)
       in ["stop"] then worktree_stop(repo_root)
       in ["cleanup"] | ["register", _] then worktree_cleanup
@@ -32,10 +25,10 @@ module Brunch
       in ["ports"] then worktree_ports
       in ["port"] then worktree_port
       in ["logs", *arguments] then worktree_logs(arguments)
-      in ["exec", "--", *command] if !command.empty? then worktree_exec(command)
+      in ["run", "--", *command] if !command.empty? then worktree_run(command)
       in ["doctor"] then worktree_doctor
       else
-        warn "Usage: brunch {activate|start <current-ref>|stop|restart|status|ports|port|logs [args]|exec -- <cmd>|doctor|cleanup}"
+        warn "Usage: brunch {activate|start <current-ref>|stop|restart|status|ports|port|logs [args]|run -- <cmd>|doctor|cleanup}"
         return 64
       end
       0
@@ -86,13 +79,12 @@ module Brunch
       id = worktree_identity(path)
       record = data.fetch("worktrees", {})[id]
       return [nil, nil] unless record
+
       [record, record.fetch("environments", {})[record["current"]]]
     end
 
-    def worktree_port_for(id, data, manager)
+    def worktree_port_for(id, data, manager, base: preferred_port)
       reserved = data.fetch("worktrees", {}).values.map { |record| record["port"] }
-      reserved += data.fetch("environments", {}).values.map { |entry| entry["port"] }
-      base = preferred_port(id)
       (base..CLI::PORT_RANGE.end).chain(CLI::PORT_RANGE.begin...base).find do |port|
         !reserved.include?(port) && manager.port_available?(port)
       end || abort("No free port for worktree #{id}.")
@@ -104,34 +96,31 @@ module Brunch
       with_worktree_lock(id) do
         ref, head = worktree_ref(path)
         config = configuration(root: path)
-        abort "Worktree mode requires mode: worktrees in #{path}/brunch.yml." unless config.fetch("mode") == "worktrees"
         manager = Managers.build(config)
-        abort "#{config.fetch("manager")} is unavailable." unless manager.available?
+        abort "#{config.fetch('manager')} is unavailable." unless manager.available?
 
         existing = nil
         with_state_lock do |data|
           record = data.fetch("worktrees", {})[id]
           existing = record&.fetch("environments", {})&.[](ref)
         end
-        if existing && !force && existing["snapshot"] == path && existing["head"] == head && existing["status"] == "running"
-          return
-        end
+        return if existing && !force && existing["snapshot"] == path && existing["head"] == head && existing["status"] == "running"
 
         previous = nil
         port = nil
         with_state_lock do |data|
           record = (data["worktrees"] ||= {})[id] ||= { "path" => path, "environments" => {} }
           previous = record.fetch("environments")[record["current"]] if record["current"] && record["current"] != ref
-          port = record["port"] ||= worktree_port_for(id, data, manager)
+          port = record["port"] ||= worktree_port_for(id, data, manager, base: config.fetch("preferred_port"))
           record["path"] = path
         end
         if previous
           abort "Could not stop previous environment for #{path}." unless worktree_manager(previous).stop(previous)
-          with_state_lock { |data| data.fetch("worktrees").fetch(id).fetch("environments").fetch(previous.fetch("ref"))["status"] = "stopped" }
+          with_state_lock do |data|
+            data.fetch("worktrees").fetch(id).fetch("environments").fetch(previous.fetch("ref"))["status"] = "stopped"
+          end
         end
-        if existing
-          abort "Could not reset environment for #{path}." unless worktree_manager(existing).reset(existing)
-        end
+        abort "Could not reset environment for #{path}." if existing && !worktree_manager(existing).reset(existing)
 
         project = "brunch-#{id[0, 12]}-#{Digest::SHA256.hexdigest(ref)[0, 12]}"
         control = File.join(state_root, "controls", project)
@@ -166,10 +155,11 @@ module Brunch
       with_worktree_lock(id) do
         with_state_lock do |data|
           _record, entry = current_worktree_entry(data, path)
-          next warn "No Brunch environment in this worktree." unless entry
-          abort "Could not stop #{entry.fetch("project")}." unless worktree_manager(entry).stop(entry)
+          raise CLI::OperationError, "No Brunch environment in this worktree." unless entry
+
+          abort "Could not stop #{entry.fetch('project')}." unless worktree_manager(entry).stop(entry)
           entry["status"] = "stopped"
-          puts "Stopped #{entry.fetch("project")}."
+          puts "Stopped #{entry.fetch('project')}."
         end
       end
     end
@@ -179,6 +169,7 @@ module Brunch
       data = state
       id, = data.fetch("worktrees", {}).find { |_key, record| record["path"] == path }
       return unless id
+
       with_worktree_lock(id) do
         record = state.fetch("worktrees").fetch(id)
         record.fetch("environments").each do |ref, entry|
@@ -195,10 +186,12 @@ module Brunch
       data = state
       id, = data.fetch("worktrees", {}).find { |_key, record| record["path"] == old_path }
       return worktree_activate(new_path) unless id
+
       with_worktree_lock(id) do
         record = state.fetch("worktrees").fetch(id)
         record.fetch("environments").each_value do |entry|
           next unless entry["status"] == "running"
+
           abort "Could not stop environment during worktree move." unless worktree_manager(entry).stop(entry)
         end
         with_state_lock do |locked|
@@ -251,7 +244,8 @@ module Brunch
       data = state
       record, current = current_worktree_entry(data)
       return puts "No Brunch environment in this worktree." unless current
-      puts "#{current.fetch("ref")} (#{record.fetch("path")}): #{worktree_manager(current).status(current)}, http://127.0.0.1:#{record.fetch("port")}" 
+
+      puts "#{current.fetch('ref')} (#{record.fetch('path')}): #{worktree_manager(current).status(current)}, http://127.0.0.1:#{record.fetch('port')}"
     end
 
     def worktree_ports
@@ -260,28 +254,33 @@ module Brunch
       data.fetch("worktrees", {}).sort_by { |_id, record| record.fetch("path") }.each do |id, record|
         entry = record.fetch("environments", {})[record["current"]]
         next unless entry
+
         marker = id == current_id ? color("●", 32) : "○"
         name = id == current_id ? color(entry.fetch("ref"), 32) : entry.fetch("ref")
-        puts "#{marker} #{name}  #{record.fetch("port")}  #{record.fetch("path")}"
+        puts "#{marker} #{name}  #{record.fetch('port')}  #{record.fetch('path')}"
       end
     end
 
     def worktree_port
       record, = current_worktree_entry(state)
-      return warn "No Brunch environment in this worktree." unless record
+      raise CLI::OperationError, "No Brunch environment in this worktree." unless record
+
       puts record.fetch("port")
     end
 
     def worktree_logs(arguments)
       _record, entry = current_worktree_entry(state)
-      return warn "No Brunch environment in this worktree." unless entry
+      raise CLI::OperationError, "No Brunch environment in this worktree." unless entry
+
       worktree_manager(entry).logs(entry, *arguments)
     end
 
-    def worktree_exec(command)
+    def worktree_run(command)
       _record, entry = current_worktree_entry(state)
-      return warn "No Brunch environment in this worktree." unless entry
-      abort "Command failed: #{command.join(" ")}" unless system(worktree_manager(entry).environment(entry), *command, chdir: entry.fetch("snapshot"))
+      raise CLI::OperationError, "No Brunch environment in this worktree." unless entry
+
+      abort "Command failed: #{command.join(' ')}" unless system(worktree_manager(entry).environment(entry), *command,
+                                                                 chdir: entry.fetch("snapshot"))
     end
 
     def worktree_doctor
@@ -296,7 +295,7 @@ module Brunch
           path = File.join(hooks_dir, event)
           File.file?(path) && File.read(path).include?("Brunch::Hooks.dispatch")
         end,
-        "Configuration" => configuration.fetch("mode") == "worktrees",
+        "Configuration" => !configuration.nil?,
         "Manager" => Managers.build(configuration).available?,
         "Unique ports" => ports.uniq.size == ports.size,
         "Port range" => ports.all? { |port| CLI::PORT_RANGE.cover?(port) },
@@ -304,7 +303,7 @@ module Brunch
           paths.include?(record.fetch("path"))
         end
       }
-      checks.each { |name, passed| puts "#{passed ? "OK" : "FAIL"} #{name}" }
+      checks.each { |name, passed| puts "#{passed ? 'OK' : 'FAIL'} #{name}" }
       abort "Brunch doctor found problems." unless checks.values.all?
     end
   end

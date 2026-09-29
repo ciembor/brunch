@@ -3,74 +3,43 @@
 require "fileutils"
 require "json"
 require "open3"
-require "socket"
 require "yaml"
 
 module Brunch
   class CLI
     include WorktreeMode
-    PORT_RANGE = (1024..49_151)
-    class ConfigurationError < StandardError; end
 
-    class << self
-      def start(arguments)
-        new.start(arguments)
-      end
-    end
+    PORT_RANGE = (1024..49_151)
+    CONFIGURATION_KEYS = %w[manager compose_file command commands preferred_port].freeze
+    COMMAND_KEYS = %w[create start stop remove status health logs].freeze
+
+    class ConfigurationError < StandardError; end
+    class OperationError < StandardError; end
+
+    def self.start(arguments) = new.start(arguments)
 
     def start(arguments)
       Dir.chdir(repo_root) unless Dir.pwd == repo_root
-      return worktree_command(arguments) if worktree_command?(arguments)
-      lock = acquire_lock
-      return 75 unless lock
-
       case arguments
-      in ["activate"] then activate
-      in ["start", ref] then start_environment(ref, state)
-      in ["stop"] then stop_active_environment(state)
-      in ["restart"] then restart_active_environment(state)
-      in ["status"] then show_status(state)
-      in ["ports"] then show_ports(state)
-      in ["port"] then show_active_port(state)
-      in ["logs", *log_arguments] then show_logs(state, log_arguments)
-      in ["exec", "--", *command] if !command.empty? then execute_active_environment(state, command)
-      in ["doctor"] then doctor(state)
-      in ["cleanup"] then cleanup(state)
-      in ["register", _ref] then cleanup(state)
       in ["install"] then Hooks.install
       in ["version"] | ["--version"] | ["-v"] then puts Brunch::VERSION
-      else
-        warn "Usage: brunch {install|activate|start <ref>|stop|restart|status|ports|port|logs [args]|exec -- <cmd>|doctor|cleanup|register <ref>|version}"
-        return 64
+      else return worktree_command(arguments)
       end
-
       0
-    rescue ConfigurationError => error
-      warn error.message
+    rescue ConfigurationError => e
+      warn e.message
       64
-    ensure
-      release_lock(lock) if defined?(lock) && lock
+    rescue OperationError => e
+      warn e.message
+      1
     end
 
     private
 
-    def acquire_lock
-      FileUtils.mkdir_p(state_root)
-      lock = File.open(File.join(state_root, "lock"), "w")
-      return lock if lock.flock(File::LOCK_EX | File::LOCK_NB)
-      lock.close
-      warn "Another Brunch command is already running."
-      nil
-    end
-
-    def release_lock(lock)
-      lock.flock(File::LOCK_UN)
-      lock.close
-    end
-
     def git_output(*arguments)
       output, status = Open3.capture2("git", *arguments)
-      abort "Git command failed: git #{arguments.join(" ")}" unless status.success?
+      abort "Git command failed: git #{arguments.join(' ')}" unless status.success?
+
       output.strip
     end
 
@@ -86,8 +55,17 @@ module Brunch
     def state_path = File.join(state_root, "state.json")
 
     def state
-      return { "environments" => {} } unless File.file?(state_path)
-      JSON.parse(File.read(state_path))
+      return { "worktrees" => {} } unless File.file?(state_path)
+
+      data = JSON.parse(File.read(state_path))
+      raise ConfigurationError, "Invalid Brunch state: expected a JSON object." unless data.is_a?(Hash)
+      if data.fetch("environments", {}).any? || data.key?("active_ref")
+        raise ConfigurationError, "Legacy branch state found in .git/brunch/state.json; stop old environments before upgrading."
+      end
+
+      data
+    rescue JSON::ParserError => e
+      raise ConfigurationError, "Invalid Brunch state: #{e.message}"
     end
 
     def save_state(value)
@@ -100,264 +78,68 @@ module Brunch
       end
       File.rename(temporary_path, state_path)
     ensure
-      FileUtils.rm_f(temporary_path) if defined?(temporary_path)
+      FileUtils.rm_f(temporary_path) if temporary_path
     end
 
     def configuration(root: repo_root)
       path = File.join(root, "brunch.yml")
       configured = File.file?(path) ? YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {} : {}
-      abort "brunch.yml must contain a mapping." unless configured.is_a?(Hash)
-      value = { "mode" => "branches", "manager" => "docker_compose", "compose_file" => "compose.yaml", "port_mode" => "shared", "shared_port" => 3000 }.merge(configured)
-      value["port_mode"] = "unique" if value["mode"] == "worktrees" && !configured.key?("port_mode")
-      value["lifecycle"] ||= value["port_mode"] == "shared" ? "active_only" : "switch_only"
-      validate_configuration!(value)
-      value
+      validate_configuration!(configured)
+      { "manager" => "docker_compose", "compose_file" => "compose.yaml", "preferred_port" => 3000 }.merge(configured)
+    rescue Psych::Exception => e
+      raise ConfigurationError, "Invalid brunch.yml: #{e.message}"
     end
 
-    def manager = Managers.build(configuration)
+    def validate_configuration!(configured)
+      raise ConfigurationError, "brunch.yml must contain a mapping." unless configured.is_a?(Hash)
 
-    def validate_configuration!(value)
-      abort "brunch.yml must contain a mapping." unless value.is_a?(Hash)
-      abort "Unknown Brunch mode: #{value["mode"]}." unless %w[branches worktrees].include?(value["mode"])
-      if value["mode"] == "worktrees" && value["port_mode"] == "shared"
-        abort "Worktree mode requires unique ports."
+      unknown = configured.keys - CONFIGURATION_KEYS
+      raise ConfigurationError, "Unknown brunch.yml key(s): #{unknown.join(', ')}." unless unknown.empty?
+
+      value = { "manager" => "docker_compose", "compose_file" => "compose.yaml", "preferred_port" => 3000 }.merge(configured)
+      unless %w[docker_compose podman_compose local_process command].include?(value["manager"])
+        raise ConfigurationError, "Unknown Brunch manager: #{value['manager']}."
       end
-      abort "Unknown Brunch manager: #{value["manager"]}." unless %w[docker_compose podman_compose local_process command].include?(value["manager"])
-      abort "Unknown Brunch port mode: #{value["port_mode"]}." unless %w[shared unique].include?(value["port_mode"])
-      abort "Unknown Brunch lifecycle: #{value["lifecycle"]}." unless %w[switch_only active_only].include?(value["lifecycle"])
-      if value["mode"] == "worktrees" && value["lifecycle"] == "active_only"
-        abort "Worktree mode requires lifecycle: switch_only; other worktrees must keep running."
-      end
-      if value["port_mode"] == "shared" && (!value["shared_port"].is_a?(Integer) || !PORT_RANGE.cover?(value["shared_port"]))
-        abort "shared_port must be a number from #{PORT_RANGE.begin} to #{PORT_RANGE.end}."
+      unless value["preferred_port"].is_a?(Integer) && PORT_RANGE.cover?(value["preferred_port"])
+        raise ConfigurationError, "preferred_port must be a number from #{PORT_RANGE.begin} to #{PORT_RANGE.end}."
       end
       if %w[docker_compose podman_compose].include?(value["manager"]) && (!value["compose_file"].is_a?(String) || value["compose_file"].empty?)
-        abort "compose_file must be a non-empty string."
+        raise ConfigurationError, "compose_file must be a non-empty string."
       end
       if value["manager"] == "local_process" && (!value["command"].is_a?(String) || value["command"].empty?)
-        abort "local_process manager requires a non-empty command."
+        raise ConfigurationError, "local_process manager requires a non-empty command."
       end
       return unless value["manager"] == "command"
 
       commands = value["commands"]
-      abort "command manager requires a commands mapping." unless commands.is_a?(Hash)
-      %w[start stop remove].each { |action| abort "command manager requires commands.#{action}." unless commands[action].is_a?(String) && !commands[action].empty? }
-      %w[create status health logs].each { |action| abort "commands.#{action} must be a string." if commands.key?(action) && !commands[action].is_a?(String) }
+      raise ConfigurationError, "command manager requires a commands mapping." unless commands.is_a?(Hash)
+
+      unknown = commands.keys - COMMAND_KEYS
+      raise ConfigurationError, "Unknown commands key(s): #{unknown.join(', ')}." unless unknown.empty?
+
+      %w[start stop remove].each do |action|
+        raise ConfigurationError, "command manager requires commands.#{action}." unless commands[action].is_a?(String) && !commands[action].empty?
+      end
+      %w[create status health logs].each do |action|
+        raise ConfigurationError, "commands.#{action} must be a string." if commands.key?(action) && !commands[action].is_a?(String)
+      end
     end
 
-    def cksum(value)
-      table = @cksum_table ||= Array.new(256) do |index|
-        crc = index << 24
-        8.times { crc = (crc & 0x8000_0000).zero? ? crc << 1 : (crc << 1) ^ 0x04c1_1db7 }
-        crc & 0xffff_ffff
-      end
-      crc = value.bytes.reduce(0) { |result, byte| ((result << 8) ^ table[((result >> 24) ^ byte) & 0xff]) & 0xffff_ffff }
-      length = value.bytesize
-      while length.positive?
-        crc = ((crc << 8) ^ table[((crc >> 24) ^ (length & 0xff)) & 0xff]) & 0xffff_ffff
-        length >>= 8
-      end
-      (~crc) & 0xffff_ffff
-    end
-
-    def identifier(ref) = "#{ref.downcase.gsub(/[^a-z0-9]+/, "-")}-#{cksum(ref)}"
-    def preferred_port(ref) = PORT_RANGE.begin + (cksum(ref) % PORT_RANGE.size)
-    def port_available?(port)
-      manager.port_available?(port)
-    end
-
-    def choose_port(ref, saved_port)
-      if configuration.fetch("port_mode") == "shared"
-        port = configuration.fetch("shared_port")
-        abort "Shared port #{port} is already in use." unless port_available?(port)
-        return port
-      end
-      preferred = saved_port || preferred_port(ref)
-      return preferred if port_available?(preferred)
-      suggested = (preferred + 1..PORT_RANGE.end).find { |port| port_available?(port) } || PORT_RANGE.find { |port| port_available?(port) }
-      return nil unless suggested
-      tty = File.open("/dev/tty", "r+")
-      loop do
-        tty.print "Port #{preferred} is in use for #{ref}. Enter a port (#{PORT_RANGE.begin}-#{PORT_RANGE.end}) or press Enter for #{suggested}: "
-        answer = tty.gets
-        return nil unless answer
-        selected = answer.strip.empty? ? suggested : Integer(answer.strip, 10) rescue nil
-        return selected if selected && PORT_RANGE.cover?(selected) && port_available?(selected)
-        tty.puts "Choose a free numeric port from #{PORT_RANGE.begin} to #{PORT_RANGE.end}."
-      end
-    rescue Errno::ENOENT, Errno::ENXIO
-      warn "Port #{preferred} is in use for #{ref}, but no interactive terminal is available."
-      nil
-    ensure
-      tty&.close
-    end
-
-    def snapshot_path(ref) = File.join(state_root, "snapshots", identifier(ref))
+    def preferred_port = configuration.fetch("preferred_port")
 
     def archive_ref(ref, destination)
       FileUtils.rm_rf(destination)
       FileUtils.mkdir_p(destination)
       environment = { "LC_ALL" => "C", "LANG" => "C" }
-      statuses = Open3.pipeline([environment, "git", "archive", "--format=tar", ref], [environment, "tar", "-x", "-C", destination])
-      abort "Could not create a snapshot for #{ref}." unless statuses.all?(&:success?)
-    end
-
-    def ref_exists?(ref)
-      system("git", "cat-file", "-e", "#{ref}^{commit}", out: File::NULL, err: File::NULL)
-    end
-
-    def cleanup(data)
-      data.fetch("environments").dup.each do |ref, entry|
-        next if ref_exists?(ref) || !manager.remove(entry)
-        data.fetch("environments").delete(ref)
-        puts "Removed environment for deleted ref #{ref}."
-      end
-      save_state(data)
-    end
-
-    def recover_pending_environment(data)
-      pending = data.delete("pending")
-      return unless pending
-      manager.reset(pending)
-      save_state(data)
-      warn "Recovered interrupted environment setup for #{pending.fetch("ref", "unknown")}."
-    end
-
-    def active_entry(data)
-      ref = data["active_ref"]
-      return [nil, nil] unless ref && data.fetch("environments").key?(ref)
-      [ref, data.fetch("environments").fetch(ref)]
-    end
-
-    def stop_active_environment(data)
-      ref, entry = active_entry(data)
-      return warn "No active Brunch environment." unless entry
-      manager.stop(entry)
-      puts "Stopped #{entry.fetch("project")} for #{ref}."
-    end
-
-    def restart_active_environment(data)
-      ref, entry = active_entry(data)
-      return warn "No active Brunch environment." unless entry
-      manager.stop(entry)
-      start_environment(ref, data)
-    end
-
-    def show_status(data)
-      environments = data.fetch("environments")
-      if environments.empty?
-        puts "No Brunch environments."
-        return
-      end
-
-      environments.each do |ref, entry|
-        active = ref == data["active_ref"] ? "active" : "sleeping"
-        health = manager.healthy?(entry)
-        health_label = health.nil? ? "unknown" : health ? "healthy" : "unhealthy"
-        port = entry.fetch("port")
-        puts "#{ref} (#{active}): #{manager.status(entry)}, #{health_label}, http://127.0.0.1:#{port}"
-      end
-    end
-
-    def show_ports(data)
-      environments = data.fetch("environments")
-      if environments.empty?
-        puts "No Brunch environments."
-        return
-      end
-
-      environments.sort.each do |ref, entry|
-        active = ref == data["active_ref"]
-        marker = active ? color("●", 32) : "○"
-        name = active ? color(ref.ljust(30), 32) : ref.ljust(30)
-        puts "#{marker} #{name} #{entry.fetch("port")}"
-      end
-    end
-
-    def show_active_port(data)
-      _ref, entry = active_entry(data)
-      return warn "No active Brunch environment." unless entry
-      puts entry.fetch("port")
-    end
-
-    def show_logs(data, arguments)
-      _ref, entry = active_entry(data)
-      return warn "No active Brunch environment." unless entry
-      manager.logs(entry, *arguments)
+      statuses = Open3.pipeline([environment, "git", "archive", "--format=tar", ref],
+                                [environment, "tar", "-x", "-C", destination])
+      abort "Could not create a control copy for #{ref}." unless statuses.all?(&:success?)
     end
 
     def color(text, code)
       return text unless $stdout.tty?
+
       "\e[#{code}m#{text}\e[0m"
-    end
-
-    def execute_active_environment(data, command)
-      _ref, entry = active_entry(data)
-      return warn "No active Brunch environment." unless entry
-      abort "Command failed: #{command.join(" ")}" unless system(manager.environment(entry), *command, chdir: entry.fetch("snapshot"))
-    end
-
-    def doctor(data)
-      hooks_dir = git_output("rev-parse", "--git-path", "hooks")
-      ports = data.fetch("environments").values.map { |entry| entry.fetch("port") }
-      hooks_installed = Hooks::EVENTS.all? do |event|
-        path = File.join(hooks_dir, event)
-        File.file?(path) && File.read(path).include?("Brunch::Hooks.dispatch")
-      end
-      checks = {
-        "Git repository" => !repo_root.empty?,
-        "Git hooks" => hooks_installed,
-        "Configuration" => !!configuration,
-        "#{configuration.fetch("manager")} availability" => manager.available?,
-        "Port assignment" => configuration.fetch("port_mode") == "shared" ? ports.all? { |port| port == configuration.fetch("shared_port") } : ports.uniq.size == ports.size,
-        "Environment port range" => ports.all? { |port| PORT_RANGE.cover?(port) }
-      }
-      checks.each { |name, passed| puts "#{passed ? "OK" : "FAIL"} #{name}" }
-      abort "Brunch doctor found problems." unless checks.values.all?
-    end
-
-    def start_environment(ref, data)
-      return warn "#{configuration.fetch("manager")} is not available; skipped environment for #{ref}." unless manager.available?
-      return warn "#{ref} does not resolve to a commit; skipped environment." unless ref_exists?(ref)
-      sleep_other_environments(data, ref) if configuration.fetch("port_mode") == "shared"
-      existing = data.fetch("environments")[ref]
-      port = choose_port(ref, existing&.fetch("port", nil))
-      return warn "No port selected for #{ref}." unless port
-      entry = { "ref" => ref, "project" => "brunch-#{identifier(ref)}", "port" => port, "snapshot" => snapshot_path(ref), "compose_file" => configuration.fetch("compose_file") }
-      manager.reset(existing) if existing
-      archive_ref(ref, entry.fetch("snapshot"))
-      if %w[docker_compose podman_compose].include?(configuration.fetch("manager")) && !File.file?(File.join(entry.fetch("snapshot"), entry.fetch("compose_file")))
-        abort "Missing #{entry.fetch("compose_file")} in #{ref}."
-      end
-      data["pending"] = entry
-      save_state(data)
-      abort "Could not create environment for #{ref}." unless manager.create(entry)
-      abort "Could not start environment for #{ref}." unless manager.start(entry)
-      data.fetch("environments")[ref] = entry
-      data.delete("pending")
-      save_state(data)
-      puts "Started #{entry.fetch("project")} for #{ref} at http://127.0.0.1:#{port}"
-    end
-
-    def activate
-      data = state
-      recover_pending_environment(data)
-      cleanup(data)
-      current_ref = git_output("branch", "--show-current")
-      return if current_ref.empty?
-      previous_ref = data["active_ref"]
-      if configuration.fetch("lifecycle") == "active_only"
-        sleep_other_environments(data, current_ref)
-      elsif previous_ref && previous_ref != current_ref && data.fetch("environments").key?(previous_ref)
-        manager.stop(data.fetch("environments")[previous_ref])
-      end
-      start_environment(current_ref, data)
-      data["active_ref"] = current_ref
-      save_state(data)
-    end
-
-    def sleep_other_environments(data, active_ref)
-      data.fetch("environments").each { |ref, entry| manager.stop(entry) if ref != active_ref }
     end
   end
 end

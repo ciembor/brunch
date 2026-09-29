@@ -1,0 +1,36 @@
+exclude_paths:
+  - test
+
+detectors:
+  IrresponsibleModule:
+    enabled: false
+  BooleanParameter:
+    enabled: false
+  ControlParameter:
+    enabled: false
+  DataClump:
+    enabled: false
+  DuplicateMethodCall:
+    enabled: false
+  FeatureEnvy:
+    enabled: false
+  InstanceVariableAssumption:
+    enabled: false
+  LongParameterList:
+    enabled: false
+  MissingSafeMethod:
+    enabled: false
+  NilCheck:
+    enabled: false
+  NestedIterators:
+    enabled: false
+  RepeatedConditional:
+    enabled: false
+  TooManyMethods:
+    enabled: false
+  TooManyStatements:
+    enabled: false
+  UtilityFunction:
+    enabled: false
+  UncommunicativeVariableName:
+    enabled: false

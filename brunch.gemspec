@@ -7,7 +7,7 @@ Gem::Specification.new do |spec|
   spec.version = Brunch::VERSION
   spec.authors = ["Maciej Ciemborowicz"]
   spec.summary = "Isolated development environments for Git branches and worktrees"
-  spec.description = "Brunch uses Git hooks and git-hooks-ext to run isolated branch or parallel worktree environments through Docker Compose or custom managers."
+  spec.description = "Brunch uses Git hooks and git-hooks-ext to run isolated branch environments in parallel worktrees through Docker Compose or custom managers."
   spec.homepage = "https://github.com/ciembor/brunch"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.1.0"
@@ -21,4 +21,7 @@ Gem::Specification.new do |spec|
   spec.executables = ["brunch"]
   spec.add_development_dependency "minitest", "~> 5.0"
   spec.add_development_dependency "rake", "~> 13.0"
+  spec.add_development_dependency "reek", "~> 6.5"
+  spec.add_development_dependency "rubocop", "~> 1.75"
+  spec.add_development_dependency "simplecov", "~> 0.22"
 end

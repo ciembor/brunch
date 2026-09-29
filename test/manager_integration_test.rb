@@ -1,12 +1,14 @@
 # frozen_string_literal: true
 
-require "minitest/autorun"
+require_relative "test_helper"
 require "tmpdir"
 require_relative "../lib/brunch"
 
 class ManagerIntegrationTest < Minitest::Test
   def test_compose_manager_lifecycle
-    manager_name = ENV.fetch("BRUNCH_INTEGRATION_MANAGER") { skip "Set BRUNCH_INTEGRATION_MANAGER to run integration tests." }
+    manager_name = ENV.fetch("BRUNCH_INTEGRATION_MANAGER") do
+      skip "Set BRUNCH_INTEGRATION_MANAGER to run integration tests."
+    end
     Dir.mktmpdir do |directory|
       snapshot = File.join(directory, "snapshot")
       Dir.mkdir(snapshot)
@@ -19,7 +21,8 @@ class ManagerIntegrationTest < Minitest::Test
       YAML
       manager = Brunch::Managers.build("manager" => manager_name)
       skip "#{manager_name} is unavailable" unless manager.available?
-      entry = { "ref" => "integration", "port" => 45_000, "project" => "brunch-integration-#{Process.pid}", "snapshot" => snapshot, "compose_file" => "compose.yaml" }
+      entry = { "ref" => "integration", "port" => 45_000, "project" => "brunch-integration-#{Process.pid}",
+                "snapshot" => snapshot, "compose_file" => "compose.yaml" }
 
       assert manager.start(entry)
       assert manager.remove(entry)
@@ -29,7 +32,9 @@ class ManagerIntegrationTest < Minitest::Test
   end
 
   def test_compose_manager_removes_resources_after_worktree_disappears
-    manager_name = ENV.fetch("BRUNCH_INTEGRATION_MANAGER") { skip "Set BRUNCH_INTEGRATION_MANAGER to run integration tests." }
+    manager_name = ENV.fetch("BRUNCH_INTEGRATION_MANAGER") do
+      skip "Set BRUNCH_INTEGRATION_MANAGER to run integration tests."
+    end
     Dir.mktmpdir do |directory|
       source = File.join(directory, "worktree")
       control = File.join(directory, "control")

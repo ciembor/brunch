@@ -1,0 +1,35 @@
+AllCops:
+  TargetRubyVersion: 3.1
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - coverage/**/*
+    - brunch.gemspec
+    - Gemfile
+
+Style/Documentation:
+  Enabled: false
+
+Style/StringLiterals:
+  Enabled: false
+
+Style/FrozenStringLiteralComment:
+  Enabled: false
+
+Metrics:
+  Enabled: false
+
+Layout/LineLength:
+  Max: 160
+
+Naming/PredicateMethod:
+  Enabled: false
+
+Style/FileOpen:
+  Enabled: false
+
+Lint:
+  Enabled: true
+
+Lint/DuplicateBranch:
+  Enabled: false

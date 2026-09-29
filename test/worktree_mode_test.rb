@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "minitest/autorun"
+require_relative "test_helper"
 require "open3"
 require "tmpdir"
 require_relative "../lib/brunch"
@@ -16,7 +16,6 @@ class WorktreeModeTest < Minitest::Test
       run_git(main, "config", "user.email", "test@example.com")
       run_git(main, "config", "user.name", "Test")
       File.write(File.join(main, "brunch.yml"), <<~YAML)
-        mode: worktrees
         manager: command
         commands:
           start: "true"
@@ -35,7 +34,9 @@ class WorktreeModeTest < Minitest::Test
       refute_equal main_port, feature_port
 
       File.write(File.join(feature, "app.txt"), "uncommitted\n")
-      assert_equal 0, run_brunch(feature, "exec", "--", "ruby", "-e", "File.write('proof.txt', File.read('app.txt') + ENV.fetch('BRUNCH_PORT'))")
+      assert_equal 0,
+                   run_brunch(feature, "run", "--", "ruby", "-e",
+                              "File.write('proof.txt', File.read('app.txt') + ENV.fetch('BRUNCH_PORT'))")
       assert_equal "uncommitted\n#{feature_port}", File.read(File.join(feature, "proof.txt"))
       File.delete(File.join(feature, "proof.txt"))
 
@@ -57,7 +58,8 @@ class WorktreeModeTest < Minitest::Test
       run_git(feature, "switch", "--quiet", "-c", "alternate")
       assert_equal 0, run_brunch(feature, "activate")
       data = JSON.parse(File.read(File.join(main, ".git", "brunch", "state.json")))
-      assert_equal "stopped", data.fetch("worktrees").fetch(feature_id).fetch("environments").fetch("feature").fetch("status")
+      assert_equal "stopped",
+                   data.fetch("worktrees").fetch(feature_id).fetch("environments").fetch("feature").fetch("status")
       assert_equal "alternate", data.fetch("worktrees").fetch(feature_id).fetch("current")
       assert_equal feature_port, capture_brunch(feature, "port")
       assert_equal "running", current_entry(data, main_id).fetch("status")
@@ -92,7 +94,6 @@ class WorktreeModeTest < Minitest::Test
       run_git(main, "config", "user.name", "Test")
       File.write(File.join(main, "Gemfile"), "source 'https://rubygems.org'\ngem 'brunch', path: '../brunch'\n")
       File.write(File.join(main, "brunch.yml"), <<~YAML)
-        mode: worktrees
         manager: command
         commands:
           start: "printf x >> .starts"
@@ -127,7 +128,6 @@ class WorktreeModeTest < Minitest::Test
       run_git(main, "config", "user.email", "test@example.com")
       run_git(main, "config", "user.name", "Test")
       File.write(File.join(main, "brunch.yml"), <<~YAML)
-        mode: worktrees
         manager: command
         commands:
           start: "sleep 1"
@@ -151,14 +151,17 @@ class WorktreeModeTest < Minitest::Test
       records = data.fetch("worktrees").values
       assert_equal 2, records.size
       assert_equal 2, records.map { |record| record.fetch("port") }.uniq.size
-      assert records.all? { |record| record.fetch("environments").fetch(record.fetch("current")).fetch("status") == "running" }
+      assert(records.all? do |record|
+        record.fetch("environments").fetch(record.fetch("current")).fetch("status") == "running"
+      end)
     end
   end
 
   private
 
   def run_git(directory, *arguments)
-    assert system("git", "-C", directory, *arguments, out: File::NULL, err: File::NULL), "git #{arguments.join(' ')} failed"
+    assert system("git", "-C", directory, *arguments, out: File::NULL, err: File::NULL),
+           "git #{arguments.join(' ')} failed"
   end
 
   def run_brunch(directory, *arguments)

@@ -5,12 +5,14 @@ require "open3"
 
 module Brunch
   module Hooks
-    EVENTS = %w[branch-created remote-branch-created remote-branch-updated post-checkout worktree-created worktree-removed worktree-moved worktree-pruned worktree-repaired].freeze
+    EVENTS = %w[branch-created remote-branch-created remote-branch-updated post-checkout worktree-created
+                worktree-removed worktree-moved worktree-pruned worktree-repaired].freeze
 
     module_function
 
     def install
-      abort "git-hooks-ext must be installed before running this command." unless system("ghe", "--version", out: File::NULL, err: File::NULL)
+      abort "git-hooks-ext must be installed before running this command." unless system("ghe", "--version",
+                                                                                         out: File::NULL, err: File::NULL)
       abort "Could not install the git-hooks-ext bridge." unless system("ghe", "install")
 
       hooks_dir = git_output("rev-parse", "--git-path", "hooks")
@@ -33,7 +35,7 @@ module Brunch
 
     def git_output(*arguments)
       output, status = Open3.capture2("git", *arguments)
-      abort "Git command failed: git #{arguments.join(" ")}" unless status.success?
+      abort "Git command failed: git #{arguments.join(' ')}" unless status.success?
 
       output.strip
     end
@@ -41,9 +43,7 @@ module Brunch
 
     def install_hook(path, event)
       contents = hook_contents(event)
-      if File.exist?(path) && File.read(path) != contents && !brunch_hook?(path)
-        abort "Refusing to replace existing hook: #{path}"
-      end
+      abort "Refusing to replace existing hook: #{path}" if File.exist?(path) && File.read(path) != contents && !brunch_hook?(path)
 
       FileUtils.mkdir_p(File.dirname(path))
       File.write(path, contents)

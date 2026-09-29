@@ -1,3 +1,5 @@
 /.bundle/
 /pkg/
+coverage/
 /*.gem
+/.rubygems_api_key
