@@ -41,3 +41,5 @@ jobs:
       - if: matrix.manager == 'podman_compose'
         run: sudo apt-get update && sudo apt-get install -y podman podman-compose
       - run: BRUNCH_INTEGRATION_MANAGER=${{ matrix.manager }} bundle exec ruby -Itest test/manager_integration_test.rb
+        env:
+          PODMAN_COMPOSE_PROVIDER: ${{ matrix.manager == 'podman_compose' && '/usr/bin/podman-compose' || '' }}
