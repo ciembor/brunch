@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.8.3 - 2026-09-29
+
+- Detect containers that exit immediately after a Compose resume and report the
+  failure instead of claiming the branch environment is running.
+- Retry activation when a recorded running environment has actually stopped.
+
 ## 0.8.2 - 2026-09-29
 
 - Resume stopped branch containers without rebuilding or replacing them when

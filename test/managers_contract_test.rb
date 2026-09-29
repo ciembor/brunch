@@ -58,8 +58,11 @@ class ManagersContractTest < Minitest::Test
         end
         assert manager.available?
         assert manager.start(entry)
-        assert manager.resume(entry)
-        assert_equal "start", calls.last.first.last
+        success = Struct.new(:success?).new(true)
+        manager.define_singleton_method(:sleep) { |_seconds| nil }
+        Open3.stub(:capture2, ["container-id\n", success]) { assert manager.resume(entry) }
+        assert(calls.any? { |args, _| args.last == "start" })
+        Open3.stub(:capture2, ["", success]) { refute manager.resume(entry) }
         assert manager.logs(entry)
         assert manager.logs(entry, "--follow", "web")
         assert manager.stop(entry)
@@ -69,7 +72,6 @@ class ManagersContractTest < Minitest::Test
         assert(calls.any? { |args, _| args.include?("--tail") })
         assert(calls.any? { |args, _| args.include?("--follow") })
 
-        success = Struct.new(:success?).new(true)
         Open3.stub(:capture2, ["container-id\n", success]) do
           assert manager.healthy?(entry)
           assert_equal "running", manager.status(entry)
@@ -103,6 +105,14 @@ class ManagersContractTest < Minitest::Test
       refute_path_exists entry.fetch("control")
     ensure
       occupied&.close unless occupied&.closed?
+    end
+  end
+
+  def test_compose_resume_reports_start_failure
+    with_entry do |entry|
+      manager = Brunch::Managers::DockerCompose.new({})
+      manager.define_singleton_method(:compose) { |*_arguments| false }
+      refute manager.resume(entry)
     end
   end
 

@@ -106,7 +106,10 @@ module Brunch
           existing = record&.fetch("environments", {})&.[](ref)
           current_ref = record&.[]("current")
         end
-        return if existing && !force && existing["snapshot"] == path && existing["status"] == "running" && current_ref == ref
+        if existing && !force && existing["snapshot"] == path && existing["status"] == "running" &&
+           current_ref == ref && worktree_manager(existing).status(existing) != "stopped"
+          return
+        end
 
         previous = nil
         port = nil
@@ -124,7 +127,10 @@ module Brunch
         end
         if existing && !force && existing["snapshot"] == path && existing["status"] != "starting"
           with_state_lock { |data| data.fetch("worktrees").fetch(id)["current"] = ref }
-          abort "Could not resume environment for #{path}. Run brunch restart to rebuild it." unless worktree_manager(existing).resume(existing)
+          unless worktree_manager(existing).resume(existing)
+            abort "Could not resume environment for #{path}; the container may have exited. Check brunch logs. " \
+                  "If dependencies changed, rebuild with brunch restart (this replaces the container)."
+          end
 
           with_state_lock do |data|
             data.fetch("worktrees").fetch(id).fetch("environments").fetch(ref)["status"] = "running"

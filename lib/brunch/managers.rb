@@ -68,7 +68,17 @@ module Brunch
       end
 
       def start(entry) = compose(entry, "up", "--detach", "--build", "--remove-orphans")
-      def resume(entry) = compose(entry, "start")
+
+      def resume(entry)
+        return false unless compose(entry, "start")
+
+        # Compose can report success even when the application exits immediately.
+        3.times do
+          sleep 0.2
+          return false unless healthy?(entry)
+        end
+        true
+      end
 
       def status(entry)
         return "unavailable" unless available?

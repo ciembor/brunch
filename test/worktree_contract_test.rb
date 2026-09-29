@@ -6,7 +6,8 @@ require_relative "../lib/brunch"
 
 class WorktreeContractTest < Minitest::Test
   class ManagerDouble
-    attr_accessor :available, :create_result, :start_result, :stop_result, :resume_result, :reset_result, :remove_result
+    attr_accessor :available, :create_result, :start_result, :stop_result, :resume_result, :reset_result, :remove_result,
+                  :status_result
     attr_reader :events
 
     def initialize
@@ -18,9 +19,11 @@ class WorktreeContractTest < Minitest::Test
       @resume_result = true
       @reset_result = true
       @remove_result = true
+      @status_result = "unknown"
     end
 
     def available? = available
+    def status(_entry) = status_result
     def port_available?(_port) = true
 
     def create(entry)
@@ -289,6 +292,12 @@ class WorktreeContractTest < Minitest::Test
         manager.resume_result = true
         cli.send(:worktree_activate, root)
         assert_equal "running", cli.send(:current_worktree_entry, cli.send(:state)).last.fetch("status")
+
+        manager.status_result = "stopped"
+        resumes_before = manager.events.count { |event| event == [:resume, "main"] }
+        cli.send(:worktree_activate, root)
+        resumes_after = manager.events.count { |event| event == [:resume, "main"] }
+        assert_equal resumes_before + 1, resumes_after
       end
     end
   end
