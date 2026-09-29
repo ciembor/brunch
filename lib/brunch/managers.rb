@@ -15,6 +15,8 @@ module Brunch
 
       def create(_entry) = true
 
+      def resume(entry) = start(entry)
+
       def environment(entry)
         {
           "BRUNCH_REF" => entry.fetch("ref", ""),
@@ -66,6 +68,7 @@ module Brunch
       end
 
       def start(entry) = compose(entry, "up", "--detach", "--build", "--remove-orphans")
+      def resume(entry) = compose(entry, "start")
 
       def status(entry)
         return "unavailable" unless available?

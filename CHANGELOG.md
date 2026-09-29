@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.8.2 - 2026-09-29
+
+- Resume stopped branch containers without rebuilding or replacing them when
+  switching back, preserving files in their writable layers.
+- Group `brunch ports` by worktree and show stopped branch environments in gray.
+
 ## 0.8.1 - 2026-09-29
 
 - Reorganize the README into a step-by-step guide for branches, parallel

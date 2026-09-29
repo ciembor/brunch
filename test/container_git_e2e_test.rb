@@ -49,6 +49,25 @@ class ContainerGitE2ETest < Minitest::Test
     end
   end
 
+  def test_switch_back_keeps_the_same_container_and_its_writable_files
+    with_repository do |main, _directory|
+      commit_fixture(main)
+      run_cli(main, "activate")
+      main_entry = state(main).fetch("worktrees").values.first.fetch("environments").fetch("main")
+      project = main_entry.fetch("project")
+      original_id = container_id(project)
+      run_container("exec", original_id, "sh", "-c", "echo preserved > /tmp/brunch-persistence")
+
+      run_git(main, "switch", "--quiet", "-c", "feature")
+      run_cli(main, "activate")
+      run_git(main, "switch", "--quiet", "main")
+      assert_includes run_cli(main, "activate"), "Resumed main"
+
+      assert_equal original_id, container_id(project)
+      assert_equal "preserved", run_container("exec", original_id, "cat", "/tmp/brunch-persistence")
+    end
+  end
+
   def test_parallel_worktrees_serve_independently_and_cleanup_removed_worktree
     with_repository do |main, directory|
       commit_fixture(main)
@@ -158,6 +177,18 @@ class ContainerGitE2ETest < Minitest::Test
     output, error, status = Open3.capture3(Gem.ruby, EXECUTABLE, *arguments, chdir: directory)
     assert status.success?, "brunch #{arguments.join(' ')} failed: #{output}#{error}"
     output.force_encoding(Encoding::UTF_8).strip
+  end
+
+  def run_container(*arguments)
+    output, error, status = Open3.capture3(@manager_name == "podman_compose" ? "podman" : "docker", *arguments)
+    assert status.success?, "#{arguments.join(' ')} failed: #{output}#{error}"
+    output.strip
+  end
+
+  def container_id(project)
+    id = run_container("ps", "--filter", "label=com.docker.compose.project=#{project}", "--quiet")
+    refute_empty id
+    id
   end
 
   def state(main)

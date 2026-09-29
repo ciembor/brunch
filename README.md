@@ -101,6 +101,8 @@ git switch main
 Branches checked out in the same worktree reuse that worktree's host port.
 
 With Compose, each branch keeps its own Compose project and named volumes, so persistent resources remain isolated between branches.
+Returning to a previously activated branch starts its stopped containers again,
+preserving files written inside them. The branch keeps the same host port.
 
 To manually start the environment after `brunch stop`:
 
@@ -108,11 +110,14 @@ To manually start the environment after `brunch stop`:
 brunch activate
 ```
 
-To rebuild and restart it:
+To rebuild and recreate its containers explicitly:
 
 ```bash
 brunch restart
 ```
+
+`brunch restart` may discard data stored only in a container's writable layer.
+Put important data, such as databases, in named volumes.
 
 Compose builds use files from the live worktree, including uncommitted changes.
 
@@ -140,7 +145,9 @@ brunch ports
 
 `brunch port` prints the current worktree's port.
 
-`brunch ports` lists ports assigned to all worktrees.
+`brunch ports` groups the current and previously activated branches under each
+worktree. Stopped branches appear in gray and retain their worktree's port for
+the next activation.
 
 Switching branches inside one worktree does not affect environments running in other worktrees.
 
@@ -282,7 +289,7 @@ Print the current worktree's port.
 brunch ports
 ```
 
-List ports assigned to all worktrees.
+List current and stopped branch environments grouped by worktree.
 
 ```bash
 brunch stop

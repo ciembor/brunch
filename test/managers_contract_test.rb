@@ -23,6 +23,8 @@ class ManagersContractTest < Minitest::Test
       assert_equal({ "BRUNCH_REF" => "topic", "BRUNCH_PORT" => "31234", "BRUNCH_PROJECT" => "brunch-topic",
                      "BRUNCH_SNAPSHOT" => entry.fetch("snapshot") }, manager.environment(entry))
       assert manager.create(entry)
+      manager.define_singleton_method(:start) { |_entry| :started }
+      assert_equal :started, manager.resume(entry)
       assert_equal "unknown", manager.status(entry)
       refute manager.healthy?(entry)
       _out, err = capture_io { refute manager.logs(entry) }
@@ -56,6 +58,8 @@ class ManagersContractTest < Minitest::Test
         end
         assert manager.available?
         assert manager.start(entry)
+        assert manager.resume(entry)
+        assert_equal "start", calls.last.first.last
         assert manager.logs(entry)
         assert manager.logs(entry, "--follow", "web")
         assert manager.stop(entry)

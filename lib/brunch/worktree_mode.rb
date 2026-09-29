@@ -100,11 +100,13 @@ module Brunch
         abort "#{config.fetch('manager')} is unavailable." unless manager.available?
 
         existing = nil
+        current_ref = nil
         with_state_lock do |data|
           record = data.fetch("worktrees", {})[id]
           existing = record&.fetch("environments", {})&.[](ref)
+          current_ref = record&.[]("current")
         end
-        return if existing && !force && existing["snapshot"] == path && existing["head"] == head && existing["status"] == "running"
+        return if existing && !force && existing["snapshot"] == path && existing["status"] == "running" && current_ref == ref
 
         previous = nil
         port = nil
@@ -119,6 +121,16 @@ module Brunch
           with_state_lock do |data|
             data.fetch("worktrees").fetch(id).fetch("environments").fetch(previous.fetch("ref"))["status"] = "stopped"
           end
+        end
+        if existing && !force && existing["snapshot"] == path && existing["status"] != "starting"
+          with_state_lock { |data| data.fetch("worktrees").fetch(id)["current"] = ref }
+          abort "Could not resume environment for #{path}. Run brunch restart to rebuild it." unless worktree_manager(existing).resume(existing)
+
+          with_state_lock do |data|
+            data.fetch("worktrees").fetch(id).fetch("environments").fetch(ref)["status"] = "running"
+          end
+          puts "Resumed #{ref} in #{path} at http://127.0.0.1:#{existing.fetch('port')}"
+          return
         end
         abort "Could not reset environment for #{path}." if existing && !worktree_manager(existing).reset(existing)
 
@@ -252,12 +264,22 @@ module Brunch
       data = state
       current_id = worktree_identity(repo_root)
       data.fetch("worktrees", {}).sort_by { |_id, record| record.fetch("path") }.each do |id, record|
-        entry = record.fetch("environments", {})[record["current"]]
-        next unless entry
+        environments = record.fetch("environments", {})
+        next if environments.empty?
 
-        marker = id == current_id ? color("●", 32) : "○"
-        name = id == current_id ? color(entry.fetch("ref"), 32) : entry.fetch("ref")
-        puts "#{marker} #{name}  #{record.fetch('port')}  #{record.fetch('path')}"
+        path = record.fetch("path")
+        puts(id == current_id ? color("● #{path}", 32) : "○ #{path}")
+        branches = environments.sort_by { |ref, _entry| [ref == record["current"] ? 0 : 1, ref] }
+        branches.each_with_index do |(ref, entry), index|
+          prefix = index == branches.length - 1 ? "  └─" : "  ├─"
+          running = ref == record["current"] && entry["status"] == "running"
+          unless running
+            puts color("#{prefix} ○ #{ref}  #{entry.fetch('port')}", 90)
+            next
+          end
+
+          puts "#{prefix} #{color("● #{ref}", 32)}  #{entry.fetch('port')}"
+        end
       end
     end
 

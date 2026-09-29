@@ -6,7 +6,7 @@ require_relative "../lib/brunch"
 
 class WorktreeContractTest < Minitest::Test
   class ManagerDouble
-    attr_accessor :available, :create_result, :start_result, :stop_result, :reset_result, :remove_result
+    attr_accessor :available, :create_result, :start_result, :stop_result, :resume_result, :reset_result, :remove_result
     attr_reader :events
 
     def initialize
@@ -15,6 +15,7 @@ class WorktreeContractTest < Minitest::Test
       @create_result = true
       @start_result = true
       @stop_result = true
+      @resume_result = true
       @reset_result = true
       @remove_result = true
     end
@@ -35,6 +36,11 @@ class WorktreeContractTest < Minitest::Test
     def stop(entry)
       events << [:stop, entry.fetch("ref")]
       stop_result
+    end
+
+    def resume(entry)
+      events << [:resume, entry.fetch("ref")]
+      resume_result
     end
 
     def reset(entry)
@@ -260,6 +266,33 @@ class WorktreeContractTest < Minitest::Test
     end
   end
 
+  def test_switch_back_resumes_existing_environment_without_reset
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        assert system("git", "-C", root, "switch", "--quiet", "-c", "feature")
+        cli.send(:worktree_activate, root)
+        assert system("git", "-C", root, "switch", "--quiet", "main")
+        out, = capture_io { cli.send(:worktree_activate, root) }
+
+        assert_includes out, "Resumed main"
+        assert_includes manager.events, [:resume, "main"]
+        refute_includes manager.events, [:reset, "main"]
+        assert_equal "running", cli.send(:current_worktree_entry, cli.send(:state)).last.fetch("status")
+
+        cli.send(:worktree_stop, root)
+        manager.resume_result = false
+        error = assert_raises(SystemExit) { cli.send(:worktree_activate, root) }
+        assert_equal 1, error.status
+        assert_equal "stopped", cli.send(:current_worktree_entry, cli.send(:state)).last.fetch("status")
+        manager.resume_result = true
+        cli.send(:worktree_activate, root)
+        assert_equal "running", cli.send(:current_worktree_entry, cli.send(:state)).last.fetch("status")
+      end
+    end
+  end
+
   def test_switch_stop_reset_stop_remove_and_move_failures_preserve_state
     with_repo do |cli, root|
       manager = ManagerDouble.new
@@ -322,22 +355,41 @@ class WorktreeContractTest < Minitest::Test
     end
   end
 
-  def test_ports_omit_missing_environment_and_mark_other_worktree_inactive
+  def test_ports_group_worktrees_and_dim_stopped_branches
     with_repo do |cli, root|
       id = cli.send(:worktree_identity, root)
+      other = File.join(root, "other")
       data = { "worktrees" => {
         id => { "path" => root, "current" => "main", "port" => 3000,
-                "environments" => { "main" => { "ref" => "main" } } },
-        "other" => { "path" => File.join(root, "other"), "current" => "feature", "port" => 3001,
-                     "environments" => { "feature" => { "ref" => "feature" } } },
+                "environments" => { "main" => { "ref" => "main", "port" => 3000, "status" => "running" },
+                                    "older" => { "ref" => "older", "port" => 3000, "status" => "stopped" } } },
+        "other" => { "path" => other, "current" => "feature", "port" => 3001,
+                     "environments" => { "feature" => { "ref" => "feature", "port" => 3001, "status" => "running" } } },
         "empty" => { "path" => File.join(root, "empty"), "current" => nil, "port" => 3002,
                      "environments" => {} }
       } }
       cli.define_singleton_method(:state) { data }
+      cli.define_singleton_method(:color) { |text, code| "<#{code}>#{text}</#{code}>" }
       out, = capture_io { cli.send(:worktree_ports) }
-      assert_includes out, "● main"
-      assert_includes out, "○ feature"
-      refute_includes out, "3002"
+      assert_equal <<~OUTPUT, out
+        <32>● #{root}</32>
+          ├─ <32>● main</32>  3000
+        <90>  └─ ○ older  3000</90>
+        ○ #{other}
+          └─ <32>● feature</32>  3001
+      OUTPUT
+    end
+  end
+
+  def test_ports_dim_stopped_current_branch
+    with_repo do |cli, root|
+      id = cli.send(:worktree_identity, root)
+      data = { "worktrees" => { id => { "path" => root, "current" => "main",
+                                        "environments" => { "main" => { "port" => 3000, "status" => "stopped" } } } } }
+      cli.define_singleton_method(:state) { data }
+      cli.define_singleton_method(:color) { |text, code| "<#{code}>#{text}</#{code}>" }
+      out, = capture_io { cli.send(:worktree_ports) }
+      assert_equal "<32>● #{root}</32>\n<90>  └─ ○ main  3000</90>\n", out
     end
   end
 end
