@@ -27,4 +27,34 @@ class ManagerIntegrationTest < Minitest::Test
       manager&.remove(entry) if entry && File.exist?(snapshot)
     end
   end
+
+  def test_compose_manager_removes_resources_after_worktree_disappears
+    manager_name = ENV.fetch("BRUNCH_INTEGRATION_MANAGER") { skip "Set BRUNCH_INTEGRATION_MANAGER to run integration tests." }
+    Dir.mktmpdir do |directory|
+      source = File.join(directory, "worktree")
+      control = File.join(directory, "control")
+      FileUtils.mkdir_p([source, control])
+      compose = <<~YAML
+        services:
+          web:
+            image: alpine:3.20
+            command: sh -c 'sleep 30'
+            stop_grace_period: 1s
+      YAML
+      File.write(File.join(source, "compose.yaml"), compose)
+      File.write(File.join(control, "compose.yaml"), compose)
+      manager = Brunch::Managers.build("manager" => manager_name)
+      skip "#{manager_name} is unavailable" unless manager.available?
+      entry = { "source_type" => "worktree", "ref" => "integration", "port" => 45_001,
+                "project" => "brunch-worktree-#{Process.pid}", "snapshot" => source,
+                "control" => control, "compose_file" => "compose.yaml" }
+
+      assert manager.start(entry)
+      FileUtils.rm_rf(source)
+      assert manager.remove(entry)
+      refute_path_exists control
+    ensure
+      manager&.remove(entry) if entry && File.exist?(control)
+    end
+  end
 end

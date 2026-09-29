@@ -45,13 +45,18 @@ module Brunch
 
       def reset(entry)
         stop(entry)
-        FileUtils.rm_rf(entry.fetch("snapshot"))
+        remove_managed_files(entry)
       end
 
       def remove(entry)
         stop(entry)
-        FileUtils.rm_rf(entry.fetch("snapshot"))
+        remove_managed_files(entry)
         true
+      end
+
+      def remove_managed_files(entry)
+        target = entry["source_type"] == "worktree" ? entry["control"] : entry.fetch("snapshot")
+        FileUtils.rm_rf(target) if target
       end
     end
 
@@ -91,20 +96,26 @@ module Brunch
 
       def reset(entry)
         compose(entry, "down", "--remove-orphans") if available?
-        FileUtils.rm_rf(entry.fetch("snapshot"))
+        remove_managed_files(entry)
       end
 
       def remove(entry)
         return false unless available? && compose(entry, "down", "--volumes", "--remove-orphans")
-        FileUtils.rm_rf(entry.fetch("snapshot"))
+        remove_managed_files(entry)
         true
       end
 
       private
 
       def compose_command(entry, *arguments)
-        compose_file = File.join(entry.fetch("snapshot"), entry.fetch("compose_file"))
-        ["docker", "compose", "--project-name", entry.fetch("project"), "--project-directory", entry.fetch("snapshot"), "--file", compose_file, *arguments]
+        directory = compose_directory(entry)
+        compose_file = File.join(directory, entry.fetch("compose_file"))
+        ["docker", "compose", "--project-name", entry.fetch("project"), "--project-directory", directory, "--file", compose_file, *arguments]
+      end
+
+      def compose_directory(entry)
+        source = entry.fetch("snapshot")
+        File.file?(File.join(source, entry.fetch("compose_file"))) ? source : entry.fetch("control", source)
       end
 
       def ports_command = ["docker", "ps", "--format", "{{.Ports}}"]
@@ -122,8 +133,9 @@ module Brunch
       private
 
       def compose_command(entry, *arguments)
-        compose_file = File.join(entry.fetch("snapshot"), entry.fetch("compose_file"))
-        ["podman", "compose", "--project-name", entry.fetch("project"), "--project-directory", entry.fetch("snapshot"), "--file", compose_file, *arguments]
+        directory = compose_directory(entry)
+        compose_file = File.join(directory, entry.fetch("compose_file"))
+        ["podman", "compose", "--project-name", entry.fetch("project"), "--project-directory", directory, "--file", compose_file, *arguments]
       end
 
       def ports_command = ["podman", "ps", "--format", "{{.Ports}}"]
@@ -135,7 +147,8 @@ module Brunch
 
     class LocalProcess < Base
       def start(entry)
-        log_path = File.join(entry.fetch("snapshot"), ".brunch.log")
+        log_directory = entry["source_type"] == "worktree" ? entry.fetch("control") : entry.fetch("snapshot")
+        log_path = File.join(log_directory, ".brunch.log")
         entry["pid"] = Process.spawn(environment(entry), "sh", "-lc", @configuration.fetch("command"), chdir: entry.fetch("snapshot"), out: [log_path, "a"], err: [log_path, "a"], pgroup: true)
         entry["log_path"] = log_path
         Process.detach(entry.fetch("pid"))
@@ -203,7 +216,8 @@ module Brunch
         command = @configuration.fetch("commands")[action]
         return true if optional && !command
         abort "Missing commands.#{action} for the command manager." unless command
-        system(environment(entry), "sh", "-lc", command, "brunch", *arguments, chdir: entry.fetch("snapshot"))
+        directory = File.directory?(entry.fetch("snapshot")) ? entry.fetch("snapshot") : entry.fetch("control", entry.fetch("snapshot"))
+        system(environment(entry), "sh", "-lc", command, "brunch", *arguments, chdir: directory)
       end
 
       def command?(action) = @configuration.fetch("commands").key?(action)

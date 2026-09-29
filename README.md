@@ -1,14 +1,15 @@
 # Brunch
 
-Brunch runs an isolated environment for the currently checked out Git branch.
-It uses `git-hooks-ext` for semantic ref events and the standard
-`post-checkout` hook to stop the previous environment and activate the next
-one. Docker Compose is the default manager, but projects can use custom
-commands to integrate another process or infrastructure manager.
+Brunch runs isolated development environments for Git branches or worktrees.
+The default branch mode runs one environment on a shared port. Worktree mode
+lets several people or agents run different features at the same time, each
+with its own port and data. Docker Compose is the default manager; Podman
+Compose, local processes, and project commands are also supported.
 
 Each environment has a distinct Compose project name, network, and named
-volumes. Brunch snapshots a branch with `git archive`, so environments never
-share a working directory.
+volumes. Branch mode uses a committed snapshot made with `git archive`.
+Worktree mode runs from each worktree's live directory, including uncommitted
+changes when the manager rebuilds or reloads the application.
 
 ## Requirements
 
@@ -71,6 +72,53 @@ parallel environments:
 port_mode: unique
 ```
 
+### Parallel worktrees
+
+Commit this configuration before creating worktrees so the new worktrees have
+the same mode:
+
+```yaml
+mode: worktrees
+compose_file: compose.yaml
+```
+
+Worktree mode automatically uses unique ports and keeps each worktree's
+environment running when another one starts. `port_mode: shared` and
+`lifecycle: active_only` are incompatible with it. Run `brunch install` again
+after upgrading Brunch to install its worktree hooks.
+
+```sh
+ghe worktree add -b feature-a ../feature-a
+ghe worktree add -b feature-b ../feature-b
+cd ../feature-a
+brunch port        # port for this worktree
+brunch ports       # ports for all worktrees
+```
+
+`ghe worktree add`, `move`, and `remove` emit lifecycle events. Git's
+`post-checkout` hook handles branch changes inside a worktree. If you use
+plain `git worktree add`, run `brunch activate` in the new worktree; after a
+plain move or removal, run `brunch cleanup` from a remaining worktree.
+
+The source directory is never deleted by Brunch. It keeps a separate control
+copy under `.git/brunch/controls` so it can shut down Compose or run a custom
+`remove` command after a worktree has been removed. Switching branches within
+one worktree keeps the old branch's environment stopped, with its own named
+volumes. Removing the worktree removes all of its Brunch environments. The
+`local_process` manager also writes its log to the control directory, keeping
+the worktree clean. Custom `remove` commands that depend on project files must
+be committed, because the control copy is based on the worktree's last commit.
+
+Docker builds read uncommitted files from the live worktree. To see edits in
+an already running container without rebuilding, configure a source bind
+mount or another reload mechanism in the project's Compose file. In worktree
+mode `brunch restart` rebuilds the current environment.
+
+When migrating an existing project from branch mode, stop its currently
+running environment with `brunch stop` before changing `brunch.yml`. Existing
+branch-mode snapshots and volumes remain available in the Git state directory;
+Brunch does not delete them as part of the mode switch.
+
 ### Custom manager commands
 
 Use the `command` manager when the project is started by another tool. Brunch
@@ -120,9 +168,9 @@ command: bin/dev
 
 ### Lifecycle mode
 
-The default `switch_only` mode stops the branch that was active immediately
-before a checkout. Use `active_only` to ensure every non-current environment is
-stopped whenever a branch is activated:
+In branch mode, shared ports default to `active_only`, which stops every
+non-current environment before activation. Unique ports default to
+`switch_only`, which stops only the previously active branch. For example:
 
 ```yaml
 lifecycle: active_only
@@ -130,7 +178,8 @@ lifecycle: active_only
 
 ## Lifecycle
 
-- A branch checkout creates and starts the current environment.
+- In branch mode, a branch checkout creates and starts its environment.
+- In worktree mode, each worktree keeps its own current environment and port.
 - `switch_only` stops the previous environment; `active_only` stops every
   non-current environment.
 - Checking out a remote branch into a new local tracking branch works through

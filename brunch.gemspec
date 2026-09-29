@@ -6,8 +6,8 @@ Gem::Specification.new do |spec|
   spec.name = "brunch"
   spec.version = Brunch::VERSION
   spec.authors = ["Maciej Ciemborowicz"]
-  spec.summary = "Isolated development environments for Git branches"
-  spec.description = "Brunch uses Git hooks and git-hooks-ext to run an isolated environment for the active branch through Docker Compose or custom commands."
+  spec.summary = "Isolated development environments for Git branches and worktrees"
+  spec.description = "Brunch uses Git hooks and git-hooks-ext to run isolated branch or parallel worktree environments through Docker Compose or custom managers."
   spec.homepage = "https://github.com/ciembor/brunch"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.1.0"

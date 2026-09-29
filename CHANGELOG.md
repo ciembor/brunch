@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 - 2026-09-29
+
+- Add parallel worktree mode with per-worktree ports, live source directories,
+  isolated projects and volumes, and branch-specific environments.
+- Handle git-hooks-ext worktree create, remove, move, prune, and repair events;
+  reconcile plain Git worktree operations during cleanup.
+- Preserve control files for teardown after a worktree disappears, and use
+  short repository locks plus per-worktree lifecycle locks.
+
 ## 0.6.0 - 2026-09-29
 
 - Add shared and unique port modes; shared port `3000` is now the default.

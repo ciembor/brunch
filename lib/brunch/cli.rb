@@ -8,6 +8,7 @@ require "yaml"
 
 module Brunch
   class CLI
+    include WorktreeMode
     PORT_RANGE = (1024..49_151)
     class ConfigurationError < StandardError; end
 
@@ -18,7 +19,8 @@ module Brunch
     end
 
     def start(arguments)
-      Dir.chdir(repo_root)
+      Dir.chdir(repo_root) unless Dir.pwd == repo_root
+      return worktree_command(arguments) if worktree_command?(arguments)
       lock = acquire_lock
       return 75 unless lock
 
@@ -101,10 +103,12 @@ module Brunch
       FileUtils.rm_f(temporary_path) if defined?(temporary_path)
     end
 
-    def configuration
-      path = File.join(repo_root, "brunch.yml")
+    def configuration(root: repo_root)
+      path = File.join(root, "brunch.yml")
       configured = File.file?(path) ? YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {} : {}
-      value = { "manager" => "docker_compose", "compose_file" => "compose.yaml", "port_mode" => "shared", "shared_port" => 3000 }.merge(configured)
+      abort "brunch.yml must contain a mapping." unless configured.is_a?(Hash)
+      value = { "mode" => "branches", "manager" => "docker_compose", "compose_file" => "compose.yaml", "port_mode" => "shared", "shared_port" => 3000 }.merge(configured)
+      value["port_mode"] = "unique" if value["mode"] == "worktrees" && !configured.key?("port_mode")
       value["lifecycle"] ||= value["port_mode"] == "shared" ? "active_only" : "switch_only"
       validate_configuration!(value)
       value
@@ -114,9 +118,16 @@ module Brunch
 
     def validate_configuration!(value)
       abort "brunch.yml must contain a mapping." unless value.is_a?(Hash)
+      abort "Unknown Brunch mode: #{value["mode"]}." unless %w[branches worktrees].include?(value["mode"])
+      if value["mode"] == "worktrees" && value["port_mode"] == "shared"
+        abort "Worktree mode requires unique ports."
+      end
       abort "Unknown Brunch manager: #{value["manager"]}." unless %w[docker_compose podman_compose local_process command].include?(value["manager"])
       abort "Unknown Brunch port mode: #{value["port_mode"]}." unless %w[shared unique].include?(value["port_mode"])
       abort "Unknown Brunch lifecycle: #{value["lifecycle"]}." unless %w[switch_only active_only].include?(value["lifecycle"])
+      if value["mode"] == "worktrees" && value["lifecycle"] == "active_only"
+        abort "Worktree mode requires lifecycle: switch_only; other worktrees must keep running."
+      end
       if value["port_mode"] == "shared" && (!value["shared_port"].is_a?(Integer) || !PORT_RANGE.cover?(value["shared_port"]))
         abort "shared_port must be a number from #{PORT_RANGE.begin} to #{PORT_RANGE.end}."
       end
