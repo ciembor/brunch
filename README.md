@@ -1,5 +1,7 @@
 # Brunch
 
+![Brunch — container per branch and worktree](brunch.webp)
+
 Brunch runs isolated development environments for Git worktrees. The main
 checkout is a worktree too: switching branches there reuses its port, while
 additional worktrees run in parallel on different host ports. Docker Compose
