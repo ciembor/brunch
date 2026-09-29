@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1 - 2026-09-29
+
+- Use a compatible Podman Compose provider and CLI arguments in integration
+  tests and at runtime.
+
 ## 0.7.0 - 2026-09-29
 
 - Add parallel worktree mode with per-worktree ports, live source directories,
