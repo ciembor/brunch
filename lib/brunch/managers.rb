@@ -135,13 +135,13 @@ module Brunch
       def compose_command(entry, *arguments)
         directory = compose_directory(entry)
         compose_file = File.join(directory, entry.fetch("compose_file"))
-        ["podman", "compose", "--project-name", entry.fetch("project"), "--project-directory", directory, "--file", compose_file, *arguments]
+        ["podman", "compose", "-p", entry.fetch("project"), "-f", compose_file, *arguments]
       end
 
       def ports_command = ["podman", "ps", "--format", "{{.Ports}}"]
 
       def compose(entry, *arguments)
-        system(environment(entry), *compose_command(entry, *arguments))
+        system(environment(entry), *compose_command(entry, *arguments), chdir: compose_directory(entry))
       end
     end
 
