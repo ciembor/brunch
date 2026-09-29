@@ -102,6 +102,21 @@ class ManagersContractTest < Minitest::Test
     end
   end
 
+  def test_podman_health_checks_running_containers_by_project_label
+    with_entry do |entry|
+      manager = Brunch::Managers::PodmanCompose.new({})
+      manager.define_singleton_method(:available?) { true }
+      success = Struct.new(:success?).new(true)
+      expected = ["podman", "ps", "--filter", "label=com.docker.compose.project=brunch-topic", "--quiet"]
+      Open3.stub(:capture2, lambda { |*command|
+        assert_equal expected, command
+        ["container-id\n", success]
+      }) do
+        assert manager.healthy?(entry)
+      end
+    end
+  end
+
   def test_compose_reset_removes_snapshot_and_factory_builds_each_engine
     with_entry do |entry|
       assert_instance_of Brunch::Managers::DockerCompose, Brunch::Managers.build("manager" => "docker_compose")

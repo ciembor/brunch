@@ -11,7 +11,9 @@
   settings with an optional `preferred_port`.
 - Document installation and everyday use, and add a compact illustration to
   the README.
-- Make CI lint only project files and initialize the test repository on `main`.
+- Make CI lint only project files, install the `ghe` alias, and initialize the
+  test repository on `main`.
+- Detect running Podman Compose containers by their project label.
 
 ## 0.7.1 - 2026-09-29
 

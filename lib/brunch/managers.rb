@@ -134,6 +134,14 @@ module Brunch
         system("podman", "info", out: File::NULL, err: File::NULL)
       end
 
+      def healthy?(entry)
+        return false unless available?
+
+        output, status = Open3.capture2("podman", "ps", "--filter",
+                                        "label=com.docker.compose.project=#{entry.fetch('project')}", "--quiet")
+        status.success? && !output.strip.empty?
+      end
+
       private
 
       def compose_command(entry, *arguments)
