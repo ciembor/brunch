@@ -2,51 +2,46 @@
 
 ![Brunch — container per branch and worktree](brunch.webp)
 
-Brunch runs isolated development environments for Git worktrees. The main
-checkout is a worktree too: switching branches there reuses its port, while
-additional worktrees run in parallel on different host ports. Docker Compose
-is the default manager; Podman
-Compose, local processes, and project commands are also supported.
+Brunch runs isolated development environments for Git branches and worktrees.
 
-Each branch environment has a distinct Compose project name, network, and
-named volumes. The active environment runs from its live worktree directory,
-including uncommitted changes when the manager rebuilds or reloads the app.
+Each branch gets its own environment. With Compose, that means a separate project, network, containers, and named volumes. Branches checked out in the same worktree share its host port, while additional worktrees get different ports and can run in parallel.
+
+Docker Compose is the default manager. Podman Compose, local processes, and custom project commands are also supported.
 
 ## Requirements
 
-- Ruby 3.1 or newer
-- Git 2.28 or newer
-- A supported environment manager: Docker Compose, Podman Compose, or project commands
-- [`git-hooks-ext`](https://github.com/ciembor/git-hooks-ext)
+- Ruby 3.1+
+- Git 2.28+
+- Docker Compose, Podman Compose, or another supported manager
+- [git-hooks-ext](https://github.com/ciembor/git-hooks-ext)
 
 ## Installation
 
-Install [`git-hooks-ext`](https://github.com/ciembor/git-hooks-ext) so that
-`ghe` is on your `PATH`, then install Brunch:
+Install [git-hooks-ext](https://github.com/ciembor/git-hooks-ext) so that `ghe` is available on your `PATH`, then install Brunch:
 
-```sh
+```bash
 gem install brunch
 ```
 
-Run `brunch install` inside each Git repository you want Brunch to manage.
-It installs the `git-hooks-ext` bridge and project-local hooks, and refuses
-to replace an existing hook owned by another tool.
+Inside each repository you want Brunch to manage:
 
-## Project configuration
+```bash
+brunch install
+```
 
-Add `brunch.yml` to the project root. Docker Compose is the default, so the
-following remains sufficient for Compose projects:
+Brunch installs its hooks through `git-hooks-ext` and will not overwrite hooks owned by another tool.
+
+## Configuration
+
+Add `brunch.yml` to the repository root.
+
+For Docker Compose:
 
 ```yaml
 compose_file: compose.yaml
 ```
 
-The referenced Compose file belongs to the application. Brunch does not impose
-a database or service stack: applications may define PostgreSQL, MySQL, Redis,
-Sidekiq, Elasticsearch, or any other services they need.
-Unknown `brunch.yml` fields are errors, so configuration typos are not ignored.
-
-Expose the application port with `BRUNCH_PORT`:
+Expose the application through `BRUNCH_PORT`:
 
 ```yaml
 services:
@@ -55,97 +50,154 @@ services:
       - "127.0.0.1:${BRUNCH_PORT}:3000"
 ```
 
-The first activated worktree prefers `127.0.0.1:3000`. Every worktree keeps
-its assigned host port while its branches take turns using it. Other worktrees
-receive a different free port; running containers can never bind the same host
-address and port. To prefer another starting port, set `preferred_port: 4000`.
-Brunch persists assignments privately in `.git/brunch/state.json`.
+The first activated worktree prefers port `3000`. Additional worktrees receive another free port.
 
-## Using Brunch
+To prefer a different starting port:
 
-First, commit `brunch.yml` and your Compose file (or the configuration for
-another manager). The repository needs at least one commit before Brunch can
-start an environment. Install the hooks once per repository, then activate
-the checked-out branch:
+```yaml
+preferred_port: 4000
+```
 
-```sh
+Port assignments are persisted per worktree in `.git/brunch/state.json`.
+
+## Getting started
+
+Commit `brunch.yml` and the application configuration first. The repository must contain at least one commit.
+
+Then run:
+
+```bash
 brunch install
 brunch doctor
 brunch activate
 brunch status
+```
+
+`brunch activate` starts the environment for the currently checked-out branch.
+
+To print only the current worktree's port:
+
+```bash
 brunch port
 ```
 
-Open `http://127.0.0.1:3000` if port 3000 is free, or use the port printed by
-`brunch activate` / `brunch port`. Brunch starts the application in the
-background. With Compose, the app must listen on the container port mapped in
-`compose.yaml`.
+Open the application on the printed port, for example:
 
-### Branches in one checkout
+```text
+http://127.0.0.1:3000
+```
 
-Once the hooks are installed, ordinary Git branch switches stop the old
-environment and start the new one automatically:
+With Compose, the application must listen on the container port mapped in the Compose file.
 
-```sh
+## Branch switching
+
+Once the hooks are installed, normal Git branch switches automatically stop the previous branch environment and start the new one:
+
+```bash
 git switch -c feature/login
-brunch status
 git switch main
 ```
 
-Both branches use this checkout's assigned host port. With Compose, they keep
-separate projects and volumes. To start the checked-out branch manually (for
-example, after `brunch stop`), run `brunch activate`. Run `brunch restart` to
-rebuild it after changing files that are copied into the image.
+Branches checked out in the same worktree reuse that worktree's host port.
 
-### Parallel worktrees
+With Compose, each branch keeps its own Compose project and named volumes, so persistent resources remain isolated between branches.
 
-There is no mode switch. Commit the same `brunch.yml` in your repository, then
-create additional worktrees. Run `brunch install` again after upgrading Brunch
-to install its worktree hooks.
+To manually start the environment after `brunch stop`:
 
-```sh
-ghe worktree add -b feature-a ../feature-a
-ghe worktree add -b feature-b ../feature-b
-cd ../feature-a
-brunch port        # port for this worktree
-brunch ports       # ports for all worktrees
+```bash
+brunch activate
 ```
 
-Each worktree runs independently on a different host port, so `feature-a` and
-`feature-b` can be used at the same time. Run `brunch status` or `brunch port`
-inside each worktree to find its address. Switching branches inside one
-worktree does not stop the others.
+To rebuild and restart it:
 
-`ghe worktree add`, `move`, and `remove` emit lifecycle events. Git's
-`post-checkout` hook handles branch changes inside any worktree, including the
-main checkout. If you use plain `git worktree add`, run `brunch activate` in the
-new worktree; after a plain move or removal, run `brunch cleanup` from a
-remaining worktree.
+```bash
+brunch restart
+```
 
-The source directory is never deleted by Brunch. It keeps a separate control
-copy under `.git/brunch/controls` so it can shut down Compose or run a custom
-`remove` command after a worktree has been removed. Switching branches within
-one worktree keeps the old branch's environment stopped, with its own named
-volumes. Removing the worktree removes all of its Brunch environments. The
-`local_process` manager also writes its log to the control directory, keeping
-the worktree clean. Custom `remove` commands that depend on project files must
-be committed, because the control copy is based on the worktree's last commit.
+Compose builds use files from the live worktree, including uncommitted changes.
 
-Docker builds read uncommitted files from the live worktree. To see edits in
-an already running container without rebuilding, configure a source bind
-mount or another reload mechanism in the project's Compose file.
-`brunch restart` rebuilds the current environment.
+If you want source edits to appear in an already running container without rebuilding, configure a bind mount or another reload mechanism in your Compose setup.
 
-Before upgrading from an older branch-only configuration, stop its running
-environment and clean up its legacy state. Brunch refuses to reinterpret an
-old non-empty branch state as worktree state, preventing orphaned containers.
+## Parallel worktrees
 
-### Custom manager commands
+Additional worktrees run independently on different host ports.
 
-Use the `command` manager when the project is started by another tool. Brunch
-runs commands from the live worktree with these variables: `BRUNCH_REF`,
-`BRUNCH_PORT`, `BRUNCH_PROJECT`, and `BRUNCH_SNAPSHOT`. The last variable points
-to the live worktree for compatibility with manager adapters.
+Create them with `git-hooks-ext`:
+
+```bash
+ghe worktree add -b feature-a ../feature-a
+ghe worktree add -b feature-b ../feature-b
+```
+
+Then:
+
+```bash
+cd ../feature-a
+
+brunch port
+brunch ports
+```
+
+`brunch port` prints the current worktree's port.
+
+`brunch ports` lists ports assigned to all worktrees.
+
+Switching branches inside one worktree does not affect environments running in other worktrees.
+
+If you create a worktree with plain Git:
+
+```bash
+git worktree add -b feature-c ../feature-c
+```
+
+activate Brunch manually inside it:
+
+```bash
+cd ../feature-c
+brunch activate
+```
+
+After moving or removing worktrees with plain Git, run:
+
+```bash
+brunch cleanup
+```
+
+Brunch never deletes the worktree source directory.
+
+## Managers
+
+### Docker Compose
+
+Docker Compose is the default manager:
+
+```yaml
+compose_file: compose.yaml
+```
+
+### Podman Compose
+
+Podman Compose uses the same Compose file contract:
+
+```yaml
+manager: podman_compose
+compose_file: compose.yaml
+```
+
+### Local process
+
+Use `local_process` for a development command such as `bin/dev`:
+
+```yaml
+manager: local_process
+command: bin/dev
+```
+
+Brunch starts and stops the process together with the branch environment and stores its output under `.git/brunch/controls`.
+
+### Custom commands
+
+Use the `command` manager to integrate Brunch with project-specific tooling:
 
 ```yaml
 manager: command
@@ -156,88 +208,148 @@ commands:
   remove: bin/environment remove
 ```
 
-`create` provisions manager-owned resources; it is optional for the `command`
-manager. `start` must return after
-it has launched the environment (for example, by delegating to a daemon or
-supervisor). `stop` is used when switching branches; `remove` is used when
-a worktree is deleted and should remove any manager-owned persistent
-resources. This makes the adapter suitable for Podman, Kubernetes wrappers,
-Foreman/Overmind wrappers, or a project-specific script.
+Brunch runs these commands from the live worktree with:
 
-Optional `status`, `health`, and `logs` commands power the corresponding Brunch
-commands. A successful `health` command reports a healthy environment.
-
-### Podman Compose
-
-Podman Compose uses the same Compose file contract as Docker Compose:
-
-```yaml
-manager: podman_compose
-compose_file: compose.yaml
+```text
+BRUNCH_REF
+BRUNCH_PORT
+BRUNCH_PROJECT
+BRUNCH_SNAPSHOT
 ```
 
-### Local process
+`BRUNCH_SNAPSHOT` points to the live worktree for compatibility with manager adapters.
 
-Use `local_process` for a development command such as `bin/dev`.
-Brunch starts it in a dedicated process group, records its PID, stops that
-group on a branch switch, and saves its output under `.git/brunch/controls`.
+`create` is optional.
+
+`start` must return after launching the environment.
+
+`stop` is called when switching away from the active branch.
+
+`remove` is called when the corresponding worktree environment is deleted and should remove manager-owned persistent resources.
+
+Optional commands:
 
 ```yaml
-manager: local_process
-command: bin/dev
+commands:
+  status: bin/environment status
+  health: bin/environment health
+  logs: bin/environment logs
 ```
 
-## Lifecycle
+These power the corresponding Brunch operations.
 
-- A branch checkout stops the previous environment in that worktree, then
-  creates and starts the new one on the same port.
-- Each worktree keeps its own current environment and port. Other worktrees
-  continue running during branch switches.
-- Checking out a remote branch into a new local tracking branch works through
-  the same `post-checkout` hook.
-- `brunch cleanup` removes environments belonging to deleted worktrees.
+## Worktree lifecycle
 
-Git 2.39 cannot reliably report a normal `git branch -d` operation to a hook.
-Stopped branch environments remain until their worktree is removed.
+A branch checkout stops the previous environment in that worktree and starts the new one on the same host port.
 
-## Operations
+Other worktrees continue running.
 
-```sh
-brunch status    # current worktree environment, manager status and port
-brunch ports     # worktree-to-port list; current worktree is marked in green
-brunch port      # only the current worktree's port, suitable for scripts
-brunch stop      # stop the active environment without deleting it
-brunch restart   # recreate and start the active environment
-brunch logs      # show the last 100 logs (or run commands.logs)
+Removing a worktree removes its Brunch environments. Brunch keeps the information needed to shut down manager resources under `.git/brunch/controls`, so cleanup can still run after the worktree itself is gone.
+
+If a custom `remove` command depends on project files, those files must be committed because cleanup after worktree removal uses the last committed state.
+
+`brunch cleanup` removes environments belonging to worktrees that no longer exist.
+
+Git does not expose every branch deletion workflow reliably to hooks, so stopped branch environments may remain until their worktree is removed.
+
+## Commands
+
+```bash
+brunch install
+```
+
+Install Brunch hooks for the repository.
+
+```bash
+brunch activate
+```
+
+Start the environment for the current branch.
+
+```bash
+brunch status
+```
+
+Show the current environment, manager status, and port.
+
+```bash
+brunch port
+```
+
+Print the current worktree's port.
+
+```bash
+brunch ports
+```
+
+List ports assigned to all worktrees.
+
+```bash
+brunch stop
+```
+
+Stop the active environment without removing it.
+
+```bash
+brunch restart
+```
+
+Recreate and start the active environment.
+
+```bash
+brunch logs
 brunch logs --follow
-brunch run -- bin/rails console  # runs on the host in the live worktree, not in a container
-brunch doctor    # verify Git, installed hooks, configuration, manager and ports
-brunch cleanup   # delete environments for removed worktrees
 ```
 
-Brunch coordinates commands with locks under `.git/brunch`, writes `state.json`
-atomically, and retries interrupted environment setup on the next activation.
+Show environment logs.
+
+```bash
+brunch run -- bin/rails console
+```
+
+Run a command on the host from the live worktree.
+
+```bash
+brunch doctor
+```
+
+Check Git, installed hooks, configuration, manager availability, and ports.
+
+```bash
+brunch cleanup
+```
+
+Remove environments belonging to deleted worktrees.
+
+## Upgrading from older configurations
+
+Before upgrading from an older branch-only configuration, stop its running environment and clean up its legacy state.
+
+Brunch will not reinterpret an existing non-empty branch-only state as worktree state.
 
 ## Development
 
-```sh
+```bash
 bundle install
 bin/install-pre-commit
 bundle exec rake quality
 gem build brunch.gemspec
 ```
 
-Container E2E tests use real temporary Git repositories, Compose containers,
-and HTTP requests. Run them with Docker or Podman:
+Run container integration tests with Docker Compose:
 
-```sh
+```bash
 BRUNCH_INTEGRATION_MANAGER=docker_compose bundle exec rake test
+```
+
+Or Podman Compose:
+
+```bash
 BRUNCH_INTEGRATION_MANAGER=podman_compose bundle exec rake test
 ```
 
-CI runs both managers on pushes and pull requests. Without the environment
-variable, container tests are skipped by the local quality check.
+Without `BRUNCH_INTEGRATION_MANAGER`, container integration tests are skipped by the local quality check.
 
-The pre-commit hook runs RuboCop with automatic corrections, Reek, and the full
-test suite. SimpleCov requires 100% line and branch coverage of `lib/**/*.rb`. When
-RuboCop changes a file, review and stage the correction before committing.
+The pre-commit hook runs RuboCop with automatic corrections, Reek, and the full test suite. SimpleCov requires 100% line and branch coverage for `lib/**/*.rb`.
+
+If RuboCop modifies a file, review and stage the changes before committing.

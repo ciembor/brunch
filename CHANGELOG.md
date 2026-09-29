@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.8.1 - 2026-09-29
+
+- Reorganize the README into a step-by-step guide for branches, parallel
+  worktrees, managers, and everyday commands.
+
 ## 0.8.0 - 2026-09-29
 
 - Use one worktree-based lifecycle for both branch switches and parallel
