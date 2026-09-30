@@ -1,6 +1,6 @@
 # Brunch
 
-![Brunch — container per branch and worktree](brunch.webp)
+![Brunch logo — container per worktree and branch](brunch.webp)
 
 Brunch runs isolated development environments for Git branches and worktrees.
 
@@ -41,14 +41,49 @@ For Docker Compose:
 compose_file: compose.yaml
 ```
 
-Expose the application through `BRUNCH_PORT`:
+For a Rails app with SQLite databases in `storage/`, add `Dockerfile.dev`:
+
+```dockerfile
+FROM ruby:3.4-slim
+
+WORKDIR /rails
+
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y build-essential git libsqlite3-dev libvips libyaml-dev pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY Gemfile Gemfile.lock ./
+RUN bundle install
+COPY . .
+```
+
+Use the Ruby version required by your application. Then add `compose.yaml`:
 
 ```yaml
 services:
   web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: sh -c 'bin/rails db:prepare && exec bin/rails server -b 0.0.0.0 -p 3000'
+    environment:
+      RAILS_ENV: development
+    volumes:
+      - .:/rails
+      - storage:/rails/storage
     ports:
       - "127.0.0.1:${BRUNCH_PORT}:3000"
+
+volumes:
+  storage:
 ```
+
+The bind mount makes source edits visible to Rails. The named volume keeps the
+SQLite database separate for each branch and preserves it across container
+rebuilds. If your app stores its database elsewhere, mount that location instead.
+Brunch runs on the host, so it does not need to be in the Rails `Gemfile`.
+After changing `Gemfile` or `Gemfile.lock`, run `brunch restart` to rebuild the
+image with the new gems; the named volume remains intact.
 
 The first activated worktree prefers port `3000`. Additional worktrees receive another free port.
 
