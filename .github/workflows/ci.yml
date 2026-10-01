@@ -41,7 +41,7 @@ jobs:
           repository: ciembor/git-hooks-ext
           ref: v0.6.0
           path: git-hooks-ext
-      - run: make -C git-modern -j2 NO_GETTEXT=YesPlease NO_TCLTK=YesPlease NO_OPENSSL=YesPlease prefix="$RUNNER_TEMP/git-modern" install
+      - run: make -C git-modern -j2 NO_GETTEXT=YesPlease NO_TCLTK=YesPlease NO_OPENSSL=YesPlease NO_CURL=YesPlease NO_EXPAT=YesPlease prefix="$RUNNER_TEMP/git-modern" install
       - run: echo "$RUNNER_TEMP/git-modern/bin" >> "$GITHUB_PATH"
       - run: make -C git-hooks-ext
       - run: ln -s git-hooks-ext git-hooks-ext/ghe

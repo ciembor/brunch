@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.9.0 - 2026-10-01
+## 0.9.0 - 2026-10-02
 
 - Remove environments for deleted local branches after the next Brunch command,
   while preserving them across branch renames, including reftable renames that
