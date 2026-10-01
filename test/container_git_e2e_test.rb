@@ -68,6 +68,30 @@ class ContainerGitE2ETest < Minitest::Test
     end
   end
 
+  def test_renamed_branch_reuses_volume_on_restart_and_removes_it_on_deletion
+    with_repository do |main, _directory|
+      commit_fixture(main)
+      run_cli(main, "activate")
+      original_entry = state(main).fetch("worktrees").values.first.fetch("environments").fetch("main")
+      project = original_entry.fetch("project")
+      run_container("exec", container_id(project), "sh", "-c", "echo preserved > /data/proof")
+
+      run_git(main, "branch", "-m", "renamed")
+      run_cli(main, "restart")
+
+      entry = state(main).fetch("worktrees").values.first.fetch("environments").fetch("renamed")
+      assert_equal project, entry.fetch("project")
+      assert_equal original_entry.fetch("control"), entry.fetch("control")
+      assert_equal "preserved", run_container("exec", container_id(project), "cat", "/data/proof")
+
+      run_git(main, "switch", "--quiet", "-c", "other")
+      run_git(main, "branch", "-D", "renamed")
+      run_cli(main, "cleanup")
+      assert_empty run_container("ps", "--all", "--filter", "label=com.docker.compose.project=#{project}", "--quiet")
+      assert_empty run_container("volume", "ls", "--filter", "name=#{project}_data", "--quiet")
+    end
+  end
+
   def test_parallel_worktrees_serve_independently_and_cleanup_removed_worktree
     with_repository do |main, directory|
       commit_fixture(main)
@@ -156,9 +180,12 @@ class ContainerGitE2ETest < Minitest::Test
           command: sh -c 'httpd -f -p 3000 -h /site'
           volumes:
             - .:/site:ro
+            - data:/data
           ports:
             - "127.0.0.1:${BRUNCH_PORT}:3000"
           stop_grace_period: 1s
+      volumes:
+        data:
     YAML
   end
 

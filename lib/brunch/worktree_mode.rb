@@ -20,6 +20,7 @@ module Brunch
         abort "Start the checked-out branch from its worktree." unless ref == worktree_ref(repo_root).first
         worktree_activate(repo_root)
       in ["stop"] then worktree_stop(repo_root)
+      in ["branch-deleted", ref, oid] then record_deleted_branch(ref, oid)
       in ["cleanup"] | ["register", _] then worktree_cleanup
       in ["status"] then worktree_status
       in ["ports"] then worktree_ports
@@ -140,8 +141,8 @@ module Brunch
         end
         abort "Could not reset environment for #{path}." if existing && !worktree_manager(existing).reset(existing)
 
-        project = "brunch-#{id[0, 12]}-#{Digest::SHA256.hexdigest(ref)[0, 12]}"
-        control = File.join(state_root, "controls", project)
+        project = existing ? existing.fetch("project") : "brunch-#{id[0, 12]}-#{Digest::SHA256.hexdigest(ref)[0, 12]}"
+        control = existing ? existing.fetch("control") : File.join(state_root, "controls", project)
         archive_ref(head, control)
         compose_file = config.fetch("compose_file")
         if %w[docker_compose podman_compose].include?(config.fetch("manager"))
@@ -254,6 +255,110 @@ module Brunch
           worktree_move(path, identities[id])
         elsif !paths.include?(path)
           worktree_remove(path)
+        end
+      end
+    end
+
+    def record_deleted_branch(ref, oid)
+      with_state_lock do |data|
+        records = data.fetch("worktrees", {}).values
+        next unless records.any? { |record| record.fetch("environments", {}).key?(ref) }
+
+        (data["deleted_branches"] ||= {})[ref] = oid
+      end
+    end
+
+    def reconcile_deleted_branches
+      pending = state.fetch("deleted_branches", {})
+      return if pending.empty?
+
+      refs = local_branch_refs
+      pending.each do |ref, oid|
+        unless refs.include?("refs/heads/#{ref}")
+          renamed = renamed_branch(ref, oid, refs)
+          next if renamed == :unknown
+
+          renamed ? rename_branch_environments(ref, renamed) : remove_branch_environments(ref)
+        end
+        with_state_lock { |data| data.fetch("deleted_branches").delete(ref) }
+      end
+    end
+
+    def reconcile_missing_branches
+      data = state
+      names = data.fetch("worktrees", {}).values.flat_map { |record| record.fetch("environments", {}).keys }.uniq
+      names -= data.fetch("deleted_branches", {}).keys
+      names.reject! { |ref| ref.start_with?("detached-") }
+      return if names.empty?
+
+      refs = local_branch_refs
+      names.each do |ref|
+        next if refs.include?("refs/heads/#{ref}")
+
+        renamed = renamed_branch(ref, nil, refs)
+        next if renamed == :unknown
+
+        renamed ? rename_branch_environments(ref, renamed) : remove_branch_environments(ref)
+      end
+    end
+
+    def local_branch_refs
+      output, status = Open3.capture2("git", "for-each-ref", "--format=%(refname)", "refs/heads")
+      abort "Could not inspect local branches." unless status.success?
+
+      output.lines.map(&:strip)
+    end
+
+    def renamed_branch(old_ref, old_oid, refs)
+      missing_reflog = false
+      full_ref = refs.find do |new_ref|
+        output, status = Open3.capture2("git", "reflog", "show", "--format=%H %gs", new_ref)
+        missing_reflog ||= !status.success?
+        status.success? && output.lines.any? do |line|
+          oid, message = line.split(" ", 2)
+          (old_oid.nil? || oid == old_oid) && message.to_s.strip == "Branch: renamed refs/heads/#{old_ref} to #{new_ref}"
+        end
+      end
+      return full_ref.delete_prefix("refs/heads/") if full_ref
+
+      :unknown if missing_reflog
+    end
+
+    def rename_branch_environments(old_ref, new_ref)
+      state.fetch("worktrees", {}).each_key do |id|
+        with_worktree_lock(id) do
+          with_state_lock do |data|
+            record = data.fetch("worktrees", {})[id]
+            next unless record
+
+            environments = record.fetch("environments", {})
+            next unless environments.key?(old_ref) && !environments.key?(new_ref)
+
+            entry = environments.delete(old_ref)
+            entry["ref"] = new_ref
+            environments[new_ref] = entry
+            record["current"] = new_ref if record["current"] == old_ref
+          end
+        end
+      end
+    end
+
+    def remove_branch_environments(ref)
+      state.fetch("worktrees", {}).each_key do |id|
+        with_worktree_lock(id) do
+          record = state.fetch("worktrees", {})[id]
+          entry = record&.fetch("environments", {})&.[](ref)
+          next unless entry
+
+          abort "Could not remove environment #{ref}." unless worktree_manager(entry).remove(entry)
+
+          with_state_lock do |data|
+            record = data.fetch("worktrees").fetch(id)
+            record.fetch("environments").delete(ref)
+            record["current"] = nil if record["current"] == ref
+            data.fetch("worktrees").delete(id) if record.fetch("environments").empty?
+          end
+          puts "Removed Brunch environment for deleted branch #{ref}."
         end
       end
     end

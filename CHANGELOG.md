@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.9.0 - 2026-10-01
+
+- Remove environments for deleted local branches after the next Brunch command,
+  while preserving them across branch renames, including reftable renames that
+  do not emit a deletion event. Run `brunch install` again to install the new
+  `branch-deleted` hook.
+- Keep the same Compose project and named volumes when restarting after a branch rename.
+- Exercise the config-based git-hooks-ext bridge with Git 2.55 in CI.
+
 ## 0.8.4 - 2026-10-01
 
 - Test against git-hooks-ext 0.6.0 in CI and clarify bridge upgrades and

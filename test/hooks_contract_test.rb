@@ -13,13 +13,15 @@ class HooksContractTest < Minitest::Test
       %w[branch-created remote-branch-created remote-branch-updated].each do |event|
         Brunch::Hooks.dispatch(event, ["feature"])
       end
+      Brunch::Hooks.dispatch("branch-deleted", ["feature", "refs/heads/feature", "old-oid", "new-oid"])
       %w[worktree-created worktree-removed worktree-moved worktree-pruned worktree-repaired].each do |event|
         Brunch::Hooks.dispatch(event, ["path"])
       end
       assert_raises(SystemExit) { Brunch::Hooks.dispatch("unknown", []) }
     end
     assert_equal ["activate"], calls.first
-    assert_equal 9, calls.length
+    assert_equal 10, calls.length
+    assert_includes calls, %w[branch-deleted feature old-oid]
     assert_equal %w[worktree-event worktree-repaired path], calls.last
   end
 

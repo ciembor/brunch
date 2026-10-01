@@ -13,7 +13,7 @@ Docker Compose is the default manager. Podman Compose, local processes, and cust
 - Ruby 3.1+
 - Git 2.28+ (2.39.3+ for `ghe worktree` lifecycle events)
 - Docker Compose, Podman Compose, or another supported manager
-- [git-hooks-ext](https://github.com/ciembor/git-hooks-ext)
+- [git-hooks-ext](https://github.com/ciembor/git-hooks-ext) 0.6.0+ for reliable branch deletion events
 
 ## Installation
 
@@ -30,7 +30,7 @@ brunch install
 ```
 
 Brunch installs the `git-hooks-ext` bridge and its own event hooks without overwriting hooks owned by another tool.
-After upgrading `git-hooks-ext`, run `brunch install` again in each managed repository to refresh its bridge.
+After upgrading Brunch or `git-hooks-ext`, run `brunch install` again in each managed repository to refresh its hooks and bridge.
 
 ## Configuration
 
@@ -293,7 +293,16 @@ If a custom `remove` command depends on project files, those files must be commi
 
 `brunch cleanup` removes environments belonging to worktrees that no longer exist.
 
-Git does not expose every branch deletion workflow reliably to hooks, so stopped branch environments may remain until their worktree is removed.
+With `git-hooks-ext` 0.6.0+, deleting a local branch queues its Brunch
+environments for removal. On the next regular Brunch command, such as
+`brunch status` or `brunch cleanup`, Brunch checks the current refs and removes
+the branch's managed resources, including Compose containers and volumes.
+It also checks for missing branches when Git emits no deletion event. This
+delay protects environments when `git branch -m` reports a deletion before
+creating the renamed branch. A renamed branch keeps its environment under the
+new name. If Git reflogs are unavailable and Brunch cannot distinguish a
+rename from a deletion, it keeps the environment. A later `brunch restart`
+recreates the container in the same Compose project, preserving named volumes.
 
 ## Commands
 
@@ -362,7 +371,7 @@ Check Git, installed hooks, configuration, manager availability, and ports.
 brunch cleanup
 ```
 
-Remove environments belonging to deleted worktrees.
+Remove environments belonging to deleted worktrees and process pending branch deletions.
 
 ## Upgrading from older configurations
 

@@ -119,6 +119,27 @@ class WorktreeModeTest < Minitest::Test
     end
   end
 
+  def test_git_hooks_ext_deletion_removes_environment_but_rename_preserves_it
+    skip "git-hooks-ext 0.6.0 is unavailable" unless system("ghe", "--version", out: File::NULL, err: File::NULL)
+
+    output, = Open3.capture2("ghe", "--version")
+    skip "git-hooks-ext 0.6.0 is unavailable" if Gem::Version.new(output.split.last) < Gem::Version.new("0.6.0")
+
+    assert_branch_deletion_lifecycle
+  end
+
+  def test_reftable_rename_preserves_environment_without_deletion_event
+    version, = Open3.capture2("git", "--version")
+    git_version = version[/git version (\d+(?:\.\d+)+)/, 1]
+    skip "Git 2.54 or later is unavailable" unless git_version && Gem::Version.new(git_version) >= Gem::Version.new("2.54")
+    skip "git-hooks-ext is unavailable" unless system("ghe", "--version", out: File::NULL, err: File::NULL)
+
+    hook_version, = Open3.capture2("ghe", "--version")
+    skip "git-hooks-ext 0.6.0 is unavailable" if Gem::Version.new(hook_version.split.last) < Gem::Version.new("0.6.0")
+
+    assert_branch_deletion_lifecycle("--ref-format=reftable")
+  end
+
   def test_parallel_activation_reserves_distinct_ports
     Dir.mktmpdir do |directory|
       main = File.join(directory, "main")
@@ -158,6 +179,53 @@ class WorktreeModeTest < Minitest::Test
   end
 
   private
+
+  def assert_branch_deletion_lifecycle(*init_arguments)
+    Dir.mktmpdir do |directory|
+      root = File.join(directory, "repo")
+      Dir.mkdir(root)
+      run_git(root, "init", "--quiet", "-b", "main", *init_arguments)
+      run_git(root, "config", "user.email", "test@example.com")
+      run_git(root, "config", "user.name", "Test")
+      File.write(File.join(root, "Gemfile"), "source 'https://rubygems.org'\ngem 'brunch', path: '../brunch'\n")
+      File.write(File.join(root, "brunch.yml"), <<~YAML)
+        manager: command
+        commands:
+          start: "true"
+          stop: "true"
+          remove: "printf x >> .removed"
+      YAML
+      run_git(root, "add", ".")
+      run_git(root, "commit", "--quiet", "-m", "initial")
+      Dir.chdir(root) do
+        Brunch::Hooks.install
+        Brunch::CLI.start(["activate"])
+      end
+
+      run_git(root, "switch", "--quiet", "-c", "feature")
+      run_git(root, "switch", "--quiet", "main")
+      run_git(root, "branch", "-m", "feature", "renamed")
+      assert_equal 0, run_brunch(root, "status")
+      environments = JSON.parse(File.read(File.join(root, ".git", "brunch", "state.json"))).fetch("worktrees").values.first.fetch("environments")
+      assert environments.key?("renamed")
+      refute File.exist?(File.join(root, ".removed"))
+
+      run_git(root, "branch", "-D", "renamed")
+      assert_equal 0, run_brunch(root, "status")
+      environments = JSON.parse(File.read(File.join(root, ".git", "brunch", "state.json"))).fetch("worktrees").values.first.fetch("environments")
+      refute environments.key?("renamed")
+      assert_equal "x", File.read(File.join(root, ".removed"))
+
+      run_git(root, "switch", "--quiet", "-c", "another")
+      run_git(root, "switch", "--quiet", "main")
+      run_git(root, "branch", "-m", "another", "moved")
+      run_git(root, "branch", "-D", "moved")
+      assert_equal 0, run_brunch(root, "status")
+      environments = JSON.parse(File.read(File.join(root, ".git", "brunch", "state.json"))).fetch("worktrees").values.first.fetch("environments")
+      refute environments.key?("another")
+      assert_equal "xx", File.read(File.join(root, ".removed"))
+    end
+  end
 
   def run_git(directory, *arguments)
     assert system("git", "-C", directory, *arguments, out: File::NULL, err: File::NULL),

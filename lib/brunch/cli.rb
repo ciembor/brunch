@@ -23,7 +23,12 @@ module Brunch
       case arguments
       in ["install"] then Hooks.install
       in ["version"] | ["--version"] | ["-v"] then puts Brunch::VERSION
-      else return worktree_command(arguments)
+      else
+        unless arguments.first == "branch-deleted"
+          reconcile_deleted_branches
+          reconcile_missing_branches
+        end
+        return worktree_command(arguments)
       end
       0
     rescue ConfigurationError => e

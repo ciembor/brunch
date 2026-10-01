@@ -5,7 +5,7 @@ require "open3"
 
 module Brunch
   module Hooks
-    EVENTS = %w[branch-created remote-branch-created remote-branch-updated post-checkout worktree-created
+    EVENTS = %w[branch-created branch-deleted remote-branch-created remote-branch-updated post-checkout worktree-created
                 worktree-removed worktree-moved worktree-pruned worktree-repaired].freeze
 
     module_function
@@ -26,6 +26,8 @@ module Brunch
         CLI.start(["activate"]) if arguments.fetch(2, "0") == "1"
       when "branch-created", "remote-branch-created", "remote-branch-updated"
         CLI.start(["register", arguments.fetch(0)])
+      when "branch-deleted"
+        CLI.start(["branch-deleted", arguments.fetch(0), arguments.fetch(2)])
       when "worktree-created", "worktree-removed", "worktree-moved", "worktree-pruned", "worktree-repaired"
         CLI.start(["worktree-event", event, *arguments])
       else

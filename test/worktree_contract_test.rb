@@ -79,6 +79,13 @@ class WorktreeContractTest < Minitest::Test
     end
   end
 
+  def without_reflog(&)
+    original_capture = Open3.method(:capture2)
+    Open3.stub(:capture2, lambda { |*arguments|
+      arguments[1] == "reflog" ? ["", Struct.new(:success?).new(false)] : original_capture.call(*arguments)
+    }, &)
+  end
+
   def test_dispatch_covers_worktree_commands_and_rejects_other_branch
     with_repo do |cli, root|
       calls = []
@@ -298,6 +305,199 @@ class WorktreeContractTest < Minitest::Test
         cli.send(:worktree_activate, root)
         resumes_after = manager.events.count { |event| event == [:resume, "main"] }
         assert_equal resumes_before + 1, resumes_after
+      end
+    end
+  end
+
+  def test_renamed_branch_keeps_its_environment_until_the_new_name_is_deleted
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        assert system("git", "switch", "--quiet", "-c", "feature")
+        cli.send(:worktree_activate, root)
+        assert system("git", "switch", "--quiet", "main")
+        cli.send(:worktree_activate, root)
+
+        old_oid = cli.send(:git_output, "rev-parse", "feature")
+        assert system("git", "branch", "-m", "feature", "renamed")
+        assert system("git", "switch", "--quiet", "renamed")
+        assert system("git", "commit", "--allow-empty", "--quiet", "-m", "new work")
+        assert system("git", "switch", "--quiet", "main")
+        cli.start(["branch-deleted", "feature", old_oid])
+        cli.start(["status"])
+        environments = cli.send(:state).fetch("worktrees").values.first.fetch("environments")
+        assert environments.key?("renamed")
+        refute environments.key?("feature")
+        refute_includes manager.events, [:remove, "feature"]
+
+        renamed_oid = cli.send(:git_output, "rev-parse", "renamed")
+        assert system("git", "branch", "-D", "renamed", out: File::NULL)
+        cli.start(["branch-deleted", "renamed", renamed_oid])
+        cli.start(["status"])
+        environments = cli.send(:state).fetch("worktrees").values.first.fetch("environments")
+        refute environments.key?("renamed")
+        assert_includes manager.events, [:remove, "renamed"]
+      end
+    end
+  end
+
+  def test_deleted_branch_reconciliation_preserves_existing_ref_and_reports_git_failure
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        oid = cli.send(:git_output, "rev-parse", "main")
+        cli.start(["branch-deleted", "main", oid])
+        cli.start(["status"])
+        assert cli.send(:state).fetch("worktrees").values.first.fetch("environments").key?("main")
+        refute_includes manager.events, [:remove, "main"]
+
+        cli.start(["branch-deleted", "main", oid])
+        failed = Struct.new(:success?).new(false)
+        Open3.stub(:capture2, ["", failed]) do
+          assert_raises(SystemExit) { cli.send(:local_branch_refs) }
+        end
+      end
+    end
+  end
+
+  def test_deleted_branch_stays_pending_when_reflog_is_unavailable
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        oid = cli.send(:git_output, "rev-parse", "main")
+        cli.send(:rename_branch_environments, "main", "old")
+        cli.start(["branch-deleted", "old", oid])
+
+        without_reflog { cli.start(["status"]) }
+        assert_equal oid, cli.send(:state).fetch("deleted_branches").fetch("old")
+        refute_includes manager.events, [:remove, "old"]
+      end
+    end
+  end
+
+  def test_missing_branch_without_reflog_keeps_its_environment
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        cli.send(:rename_branch_environments, "main", "old")
+        without_reflog { cli.start(["status"]) }
+
+        environments = cli.send(:state).fetch("worktrees").values.first.fetch("environments")
+        assert environments.key?("old")
+        refute_includes manager.events, [:remove, "old"]
+      end
+    end
+  end
+
+  def test_missing_branch_without_hook_is_removed_when_no_rename_is_known
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        assert system("git", "switch", "--quiet", "-c", "feature")
+        cli.send(:worktree_activate, root)
+        assert system("git", "switch", "--quiet", "main")
+        cli.send(:worktree_activate, root)
+        assert system("git", "branch", "-D", "feature", out: File::NULL)
+
+        cli.start(["status"])
+        environments = cli.send(:state).fetch("worktrees").values.first.fetch("environments")
+        refute environments.key?("feature")
+        assert_includes manager.events, [:remove, "feature"]
+      end
+    end
+  end
+
+  def test_rename_without_deletion_hook_is_recovered_from_reflog
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        assert system("git", "switch", "--quiet", "-c", "feature")
+        cli.send(:worktree_activate, root)
+        assert system("git", "switch", "--quiet", "main")
+        cli.send(:worktree_activate, root)
+        assert system("git", "branch", "-m", "feature", "renamed")
+
+        cli.start(["status"])
+        environments = cli.send(:state).fetch("worktrees").values.first.fetch("environments")
+        assert environments.key?("renamed")
+        refute environments.key?("feature")
+        refute_includes manager.events, [:remove, "feature"]
+      end
+    end
+  end
+
+  def test_detached_environment_is_not_treated_as_a_deleted_branch
+    with_repo do |cli, root|
+      assert system("git", "checkout", "--detach", "--quiet", out: File::NULL)
+      Brunch::Managers.stub(:build, ManagerDouble.new) do
+        cli.send(:worktree_activate, root)
+        cli.start(["status"])
+        ref = cli.send(:state).fetch("worktrees").values.first.fetch("environments").keys.first
+        assert ref.start_with?("detached-")
+      end
+    end
+  end
+
+  def test_branch_cleanup_preserves_state_when_removal_fails_and_clears_empty_worktree
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.start(%w[branch-deleted untracked oid])
+        assert_empty cli.send(:state).fetch("deleted_branches", {})
+        cli.send(:worktree_activate, root)
+        cli.send(:remove_branch_environments, "other")
+        manager.remove_result = false
+        assert_raises(SystemExit) { cli.send(:remove_branch_environments, "main") }
+        assert cli.send(:state).fetch("worktrees").values.first.fetch("environments").key?("main")
+        manager.remove_result = true
+        cli.send(:remove_branch_environments, "main")
+        assert_empty cli.send(:state).fetch("worktrees")
+      end
+    end
+  end
+
+  def test_branch_reconciliation_ignores_worktree_removed_before_its_lock
+    [[:rename_branch_environments, %w[main renamed]], [:remove_branch_environments, ["main"]]].each do |method, arguments|
+      with_repo do |cli, root|
+        Brunch::Managers.stub(:build, ManagerDouble.new) do
+          cli.send(:worktree_activate, root)
+          cli.define_singleton_method(:with_worktree_lock) do |_id, &operation|
+            data = state
+            data.fetch("worktrees").clear
+            save_state(data)
+            operation.call
+          end
+          cli.send(method, *arguments)
+          assert_empty cli.send(:state).fetch("worktrees")
+        end
+      end
+    end
+  end
+
+  def test_rename_does_not_replace_an_existing_environment
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        cli.send(:rename_branch_environments, "main", "renamed")
+        record = cli.send(:state).fetch("worktrees").values.first
+        assert_equal "renamed", record.fetch("current")
+        assert_equal "renamed", record.fetch("environments").fetch("renamed").fetch("ref")
+
+        data = cli.send(:state)
+        record = data.fetch("worktrees").values.first
+        record.fetch("environments")["main"] = record.fetch("environments").fetch("renamed").dup
+        cli.send(:save_state, data)
+        cli.send(:rename_branch_environments, "renamed", "main")
+        record = cli.send(:state).fetch("worktrees").values.first
+        assert record.fetch("environments").key?("renamed")
+        assert record.fetch("environments").key?("main")
       end
     end
   end

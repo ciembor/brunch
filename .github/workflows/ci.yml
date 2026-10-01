@@ -27,6 +27,31 @@ jobs:
       - run: bundle exec rake quality
       - run: gem build brunch.gemspec
 
+  modern-git:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: git/git
+          ref: v2.55.0
+          path: git-modern
+      - uses: actions/checkout@v4
+        with:
+          repository: ciembor/git-hooks-ext
+          ref: v0.6.0
+          path: git-hooks-ext
+      - run: make -C git-modern -j2 NO_GETTEXT=YesPlease NO_TCLTK=YesPlease NO_OPENSSL=YesPlease prefix="$RUNNER_TEMP/git-modern" install
+      - run: echo "$RUNNER_TEMP/git-modern/bin" >> "$GITHUB_PATH"
+      - run: make -C git-hooks-ext
+      - run: ln -s git-hooks-ext git-hooks-ext/ghe
+      - run: echo "$GITHUB_WORKSPACE/git-hooks-ext" >> "$GITHUB_PATH"
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - run: bundle exec rake quality
+
   manager-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
