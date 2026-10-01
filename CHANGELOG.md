@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.8.4 - 2026-10-01
+
+- Test against git-hooks-ext 0.6.0 in CI and clarify bridge upgrades and
+  worktree Git requirements.
+- Document a minimal Rails setup and update the Brunch artwork.
+
 ## 0.8.3 - 2026-09-29
 
 - Detect containers that exit immediately after a Compose resume and report the

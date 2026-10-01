@@ -11,7 +11,7 @@ Docker Compose is the default manager. Podman Compose, local processes, and cust
 ## Requirements
 
 - Ruby 3.1+
-- Git 2.28+
+- Git 2.28+ (2.39.3+ for `ghe worktree` lifecycle events)
 - Docker Compose, Podman Compose, or another supported manager
 - [git-hooks-ext](https://github.com/ciembor/git-hooks-ext)
 
@@ -29,7 +29,8 @@ Inside each repository you want Brunch to manage:
 brunch install
 ```
 
-Brunch installs its hooks through `git-hooks-ext` and will not overwrite hooks owned by another tool.
+Brunch installs the `git-hooks-ext` bridge and its own event hooks without overwriting hooks owned by another tool.
+After upgrading `git-hooks-ext`, run `brunch install` again in each managed repository to refresh its bridge.
 
 ## Configuration
 
