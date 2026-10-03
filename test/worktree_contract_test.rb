@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "stringio"
 require "tmpdir"
 require_relative "../lib/brunch"
 
@@ -90,7 +91,7 @@ class WorktreeContractTest < Minitest::Test
     with_repo do |cli, root|
       calls = []
       %i[worktree_activate worktree_stop worktree_cleanup worktree_status worktree_ports worktree_port worktree_logs
-         worktree_run worktree_doctor worktree_repair worktree_remove worktree_move].each do |method|
+         worktree_run worktree_doctor worktree_repair worktree_remove worktree_move worktree_watch].each do |method|
         cli.define_singleton_method(method) { |*args, **kwargs| calls << [method, args, kwargs] }
       end
       assert_equal 0, cli.send(:worktree_command, ["worktree-event", "worktree-repaired", root])
@@ -100,7 +101,8 @@ class WorktreeContractTest < Minitest::Test
       assert_equal 0, cli.send(:worktree_command, ["stop"])
       assert_equal 0, cli.send(:worktree_command, ["cleanup"])
       assert_equal 0, cli.send(:worktree_command, ["status"])
-      assert_equal 0, cli.send(:worktree_command, ["ports"])
+      assert_equal 0, cli.send(:worktree_command, ["list"])
+      assert_equal 0, cli.send(:worktree_command, ["watch"])
       assert_equal 0, cli.send(:worktree_command, ["port"])
       assert_equal 0, cli.send(:worktree_command, ["logs", "--follow"])
       assert_equal 0, cli.send(:worktree_command, ["run", "--", "true"])
@@ -599,6 +601,44 @@ class WorktreeContractTest < Minitest::Test
       cli.define_singleton_method(:color) { |text, code| "<#{code}>#{text}</#{code}>" }
       out, = capture_io { cli.send(:worktree_ports) }
       assert_equal "<32>● #{root}</32>\n<90>  └─ ○ main  3000</90>\n", out
+    end
+  end
+
+  def test_watch_refreshes_the_list_until_interrupted
+    with_repo do |cli, root|
+      id = cli.send(:worktree_identity, root)
+      cli.define_singleton_method(:state) do
+        { "worktrees" => {
+          id => { "path" => root, "current" => "main",
+                  "environments" => { "main" => { "port" => 3000, "status" => "running" } } }
+        } }
+      end
+      cli.define_singleton_method(:sleep) { |_seconds| raise Interrupt }
+      output = StringIO.new
+      output.define_singleton_method(:tty?) { true }
+      previous_stdout = $stdout
+      $stdout = output
+      cli.send(:worktree_watch)
+
+      assert_includes output.string, "\e[2J\e[H"
+      assert_includes output.string, "● main"
+      assert_includes output.string, "Refreshing every second. Press Ctrl-C to stop."
+      assert_includes output.string, "Stopped watching."
+    ensure
+      $stdout = previous_stdout
+    end
+  end
+
+  def test_watch_requires_an_interactive_terminal
+    with_repo do |cli, _root|
+      output = StringIO.new
+      previous_stdout = $stdout
+      $stdout = output
+
+      error = assert_raises(Brunch::CLI::OperationError) { cli.send(:worktree_watch) }
+      assert_equal "brunch watch requires an interactive terminal.", error.message
+    ensure
+      $stdout = previous_stdout
     end
   end
 end

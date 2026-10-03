@@ -104,8 +104,8 @@ class ContainerGitE2ETest < Minitest::Test
       main_port = Integer(run_cli(main, "port"))
       feature_port = Integer(run_cli(feature, "port"))
       refute_equal main_port, feature_port
-      assert_includes run_cli(main, "ports"), "● main  #{main_port}"
-      assert_includes run_cli(feature, "ports"), "● feature  #{feature_port}"
+      assert_includes run_cli(main, "list"), "● main  #{main_port}"
+      assert_includes run_cli(feature, "list"), "● feature  #{feature_port}"
       assert_http(main_port, "main\n")
       assert_http(feature_port, "feature\n")
 

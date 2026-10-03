@@ -23,13 +23,14 @@ module Brunch
       in ["branch-deleted", ref, oid] then record_deleted_branch(ref, oid)
       in ["cleanup"] | ["register", _] then worktree_cleanup
       in ["status"] then worktree_status
-      in ["ports"] then worktree_ports
+      in ["list"] then worktree_ports
+      in ["watch"] then worktree_watch
       in ["port"] then worktree_port
       in ["logs", *arguments] then worktree_logs(arguments)
       in ["run", "--", *command] if !command.empty? then worktree_run(command)
       in ["doctor"] then worktree_doctor
       else
-        warn "Usage: brunch {activate|start <current-ref>|stop|restart|status|ports|port|logs [args]|run -- <cmd>|doctor|cleanup}"
+        warn "Usage: brunch {activate|start <current-ref>|stop|restart|status|list|watch|port|logs [args]|run -- <cmd>|doctor|cleanup}"
         return 64
       end
       0
@@ -392,6 +393,20 @@ module Brunch
           puts "#{prefix} #{color("● #{ref}", 32)}  #{entry.fetch('port')}"
         end
       end
+    end
+
+    def worktree_watch
+      raise CLI::OperationError, "brunch watch requires an interactive terminal." unless $stdout.tty?
+
+      loop do
+        print "\e[2J\e[H"
+        worktree_ports
+        puts "\nRefreshing every second. Press Ctrl-C to stop."
+        $stdout.flush
+        sleep 1
+      end
+    rescue Interrupt
+      puts "\nStopped watching."
     end
 
     def worktree_port

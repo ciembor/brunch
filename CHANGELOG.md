@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.9.1 - 2026-10-03
+
+- Replace `brunch ports` with `brunch list` and add `brunch watch` for a
+  continuously refreshed interactive view of branch environments.
+
 ## 0.9.0 - 2026-10-02
 
 - Remove environments for deleted local branches after the next Brunch command,

@@ -176,14 +176,21 @@ Then:
 cd ../feature-a
 
 brunch port
-brunch ports
+brunch list
 ```
 
 `brunch port` prints the current worktree's port.
 
-`brunch ports` groups the current and previously activated branches under each
+`brunch list` groups the current and previously activated branches under each
 worktree. Stopped branches appear in gray and retain their worktree's port for
 the next activation.
+
+```bash
+brunch watch
+```
+
+`brunch watch` shows the same view and refreshes it every second. Press
+`Ctrl-C` to stop watching.
 
 Switching branches inside one worktree does not affect environments running in other worktrees.
 
@@ -331,10 +338,16 @@ brunch port
 Print the current worktree's port.
 
 ```bash
-brunch ports
+brunch list
 ```
 
 List current and stopped branch environments grouped by worktree.
+
+```bash
+brunch watch
+```
+
+Continuously refresh the branch-environment list in an interactive terminal.
 
 ```bash
 brunch stop
