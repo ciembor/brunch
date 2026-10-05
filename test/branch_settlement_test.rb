@@ -13,10 +13,14 @@ class BranchSettlementTest < Minitest::Test
     }
     Brunch::BranchSettlement.stub(:process_info, ->(pid) { processes[pid] }) do
       assert_equal({ "pid" => 40, "started" => "inner" }, Brunch::BranchSettlement.git_ancestor(40))
+      assert_equal({ "pid" => 20, "started" => "outer" }, Brunch::BranchSettlement.git_ancestor(30))
       assert_nil Brunch::BranchSettlement.git_ancestor(10)
     end
     Brunch::BranchSettlement.stub(:process_info, ->(pid) { processes[pid] if pid == 40 }) do
       assert_equal({ "pid" => 40, "started" => "inner" }, Brunch::BranchSettlement.git_ancestor(40))
+    end
+    Brunch::BranchSettlement.stub(:process_info, proc {}) do
+      assert_nil Brunch::BranchSettlement.git_ancestor(40)
     end
   end
 
@@ -33,7 +37,7 @@ class BranchSettlementTest < Minitest::Test
     end
     refute Brunch::BranchSettlement.running?({ "pid" => "123", "started" => "original" })
     refute Brunch::BranchSettlement.running?(nil)
-    Brunch::BranchSettlement.stub(:process_info, nil) do
+    Brunch::BranchSettlement.stub(:process_info, proc {}) do
       Process.stub(:kill, ->(_signal, _pid) { 1 }) do
         assert Brunch::BranchSettlement.running?(identity)
       end

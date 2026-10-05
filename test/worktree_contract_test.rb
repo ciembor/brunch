@@ -616,6 +616,27 @@ class WorktreeContractTest < Minitest::Test
     end
   end
 
+  def test_forced_rename_replaces_destination_when_source_environment_exists
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        cli.send(:rename_branch_environments, "main", "source")
+        data = cli.send(:state)
+        record = data.fetch("worktrees").values.first
+        record.fetch("environments")["target"] = record.fetch("environments").fetch("source").merge("ref" => "target")
+        cli.send(:save_state, data)
+
+        cli.send(:rename_branch_environments, "source", "target", replace_existing: true)
+
+        environments = cli.send(:state).fetch("worktrees").values.first.fetch("environments")
+        assert_equal "target", environments.fetch("target").fetch("ref")
+        refute environments.key?("source")
+        assert_includes manager.events, [:remove, "target"]
+      end
+    end
+  end
+
   def test_switch_stop_reset_stop_remove_and_move_failures_preserve_state
     with_repo do |cli, root|
       manager = ManagerDouble.new
