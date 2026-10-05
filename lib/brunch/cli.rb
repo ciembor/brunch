@@ -24,7 +24,7 @@ module Brunch
       in ["install"] then Hooks.install
       in ["version"] | ["--version"] | ["-v"] then puts Brunch::VERSION
       else
-        unless arguments.first == "branch-deleted"
+        unless %w[branch-deleted branch-settled].include?(arguments.first)
           reconcile_deleted_branches
           reconcile_missing_branches
         end

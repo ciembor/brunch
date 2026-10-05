@@ -21,6 +21,7 @@ module Brunch
         worktree_activate(repo_root)
       in ["stop"] then worktree_stop(repo_root)
       in ["branch-deleted", ref, oid] then record_deleted_branch(ref, oid)
+      in ["branch-settled", ref, token] then settle_deleted_branch(ref, token)
       in ["cleanup"] | ["register", _] then worktree_cleanup
       in ["status"] then worktree_status
       in ["list"] then worktree_ports
@@ -261,27 +262,58 @@ module Brunch
     end
 
     def record_deleted_branch(ref, oid)
+      git = BranchSettlement.git_ancestor if ENV["BRUNCH_BRANCH_DELETION_HOOK"] == "1"
+      token = BranchSettlement.token if git
+      recorded = false
       with_state_lock do |data|
         records = data.fetch("worktrees", {}).values
         next unless records.any? { |record| record.fetch("environments", {}).key?(ref) }
 
-        (data["deleted_branches"] ||= {})[ref] = oid
+        (data["deleted_branches"] ||= {})[ref] = git ? { "oid" => oid, "git" => git, "token" => token } : oid
+        recorded = true
       end
+      BranchSettlement.spawn_worker(repo_root, ref, token) if recorded && git
+    rescue SystemCallError => e
+      warn "Could not start branch cleanup worker: #{e.message}; cleanup will run on the next Brunch command."
     end
 
     def reconcile_deleted_branches
       pending = state.fetch("deleted_branches", {})
       return if pending.empty?
 
-      refs = local_branch_refs
-      pending.each do |ref, oid|
+      pending.each_key { |ref| settle_deleted_branch(ref) }
+    end
+
+    def settle_deleted_branch(ref, expected_token = nil)
+      if expected_token
+        queued = state.fetch("deleted_branches", {})[ref]
+        return unless queued.is_a?(Hash) && queued["token"] == expected_token
+
+        BranchSettlement.wait_for(queued.fetch("git"))
+      end
+      directory = File.join(state_root, "branch-locks")
+      FileUtils.mkdir_p(directory)
+      File.open(File.join(directory, Digest::SHA256.hexdigest(ref)), "w") do |lock|
+        lock.flock(File::LOCK_EX)
+        pending = state.fetch("deleted_branches", {})[ref]
+        next unless pending
+        next if expected_token && (!pending.is_a?(Hash) || pending["token"] != expected_token)
+
+        identity = pending["git"] if pending.is_a?(Hash)
+        next if identity && BranchSettlement.running?(identity)
+
+        oid = pending.is_a?(Hash) ? pending.fetch("oid") : pending
+        refs = local_branch_refs
         unless refs.include?("refs/heads/#{ref}")
           renamed = renamed_branch(ref, oid, refs)
           next if renamed == :unknown
 
-          renamed ? rename_branch_environments(ref, renamed) : remove_branch_environments(ref)
+          renamed ? rename_branch_environments(ref, renamed, replace_existing: pending.is_a?(Hash)) : remove_branch_environments(ref)
         end
-        with_state_lock { |data| data.fetch("deleted_branches").delete(ref) }
+        with_state_lock do |data|
+          current = data.fetch("deleted_branches", {})[ref]
+          data.fetch("deleted_branches").delete(ref) if current == pending
+        end
       end
     end
 
@@ -325,7 +357,11 @@ module Brunch
       :unknown if missing_reflog
     end
 
-    def rename_branch_environments(old_ref, new_ref)
+    def rename_branch_environments(old_ref, new_ref, replace_existing: false)
+      records = state.fetch("worktrees", {}).values
+      return unless records.any? { |record| record.fetch("environments", {}).key?(old_ref) }
+
+      remove_branch_environments(new_ref) if replace_existing
       state.fetch("worktrees", {}).each_key do |id|
         with_worktree_lock(id) do
           with_state_lock do |data|

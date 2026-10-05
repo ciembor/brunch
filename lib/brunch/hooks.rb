@@ -27,7 +27,9 @@ module Brunch
       when "branch-created", "remote-branch-created", "remote-branch-updated"
         CLI.start(["register", arguments.fetch(0)])
       when "branch-deleted"
-        CLI.start(["branch-deleted", arguments.fetch(0), arguments.fetch(2)])
+        with_branch_deletion_hook do
+          CLI.start(["branch-deleted", arguments.fetch(0), arguments.fetch(2)])
+        end
       when "worktree-created", "worktree-removed", "worktree-moved", "worktree-pruned", "worktree-repaired"
         CLI.start(["worktree-event", event, *arguments])
       else
@@ -42,6 +44,15 @@ module Brunch
       output.strip
     end
     private_class_method :git_output
+
+    def with_branch_deletion_hook
+      previous = ENV.fetch("BRUNCH_BRANCH_DELETION_HOOK", nil)
+      ENV["BRUNCH_BRANCH_DELETION_HOOK"] = "1"
+      yield
+    ensure
+      previous ? ENV["BRUNCH_BRANCH_DELETION_HOOK"] = previous : ENV.delete("BRUNCH_BRANCH_DELETION_HOOK")
+    end
+    private_class_method :with_branch_deletion_hook
 
     def install_hook(path, event)
       contents = hook_contents(event)

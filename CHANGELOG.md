@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.9.2 - 2026-10-05
+
+- Settle branch deletions automatically after the Git process exits, preserving
+  environments across `git branch -m` without requiring another Brunch command.
+  Handle `git branch -M` when the destination already has an environment, and
+  keep pending state if the background worker cannot start.
 
 ## 0.9.1 - 2026-10-03
 

@@ -22,7 +22,31 @@ class HooksContractTest < Minitest::Test
     assert_equal ["activate"], calls.first
     assert_equal 10, calls.length
     assert_includes calls, %w[branch-deleted feature old-oid]
+    assert_nil ENV.fetch("BRUNCH_BRANCH_DELETION_HOOK", nil)
     assert_equal %w[worktree-event worktree-repaired path], calls.last
+  end
+
+  def test_branch_deletion_hook_marks_only_its_own_dispatch
+    markers = []
+    Brunch::CLI.stub(:start, ->(_arguments) { markers << ENV.fetch("BRUNCH_BRANCH_DELETION_HOOK", nil) }) do
+      Brunch::Hooks.dispatch("branch-deleted", ["feature", "refs/heads/feature", "old-oid"])
+      Brunch::Hooks.dispatch("branch-created", ["feature"])
+    end
+    assert_equal ["1", nil], markers
+  end
+
+  def test_branch_deletion_hook_restores_existing_marker
+    marker = "BRUNCH_BRANCH_DELETION_HOOK"
+    previous = ENV.fetch(marker, nil)
+    ENV[marker] = "previous"
+
+    Brunch::CLI.stub(:start, ->(_arguments) { assert_equal "1", ENV.fetch(marker) }) do
+      Brunch::Hooks.dispatch("branch-deleted", ["feature", "refs/heads/feature", "old-oid"])
+    end
+
+    assert_equal "previous", ENV.fetch(marker)
+  ensure
+    previous ? ENV[marker] = previous : ENV.delete(marker)
   end
 
   def test_install_hook_is_idempotent_and_preserves_unrelated_hooks

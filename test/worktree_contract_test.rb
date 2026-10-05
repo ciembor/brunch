@@ -364,6 +364,106 @@ class WorktreeContractTest < Minitest::Test
     end
   end
 
+  def test_branch_settlement_ignores_stale_workers_and_waits_for_the_original_git
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        oid = cli.send(:git_output, "rev-parse", "main")
+        pending = { "oid" => oid, "git" => { "pid" => 123, "started" => "original" }, "token" => "current" }
+        cli.send(:with_state_lock) { |data| data["deleted_branches"] = { "main" => pending } }
+
+        cli.start(%w[branch-settled main stale])
+        assert_equal pending, cli.send(:state).fetch("deleted_branches").fetch("main")
+
+        Brunch::BranchSettlement.stub(:running?, true) do
+          cli.start(["status"])
+          assert_equal pending, cli.send(:state).fetch("deleted_branches").fetch("main")
+        end
+        waits = []
+        Brunch::BranchSettlement.stub(:wait_for, ->(identity) { waits << identity }) do
+          Brunch::BranchSettlement.stub(:running?, false) do
+            cli.start(%w[branch-settled main current])
+          end
+        end
+        assert_equal [pending.fetch("git")], waits
+        assert_empty cli.send(:state).fetch("deleted_branches")
+        refute_includes manager.events, [:remove, "main"]
+        cli.start(%w[branch-settled main current])
+      end
+    end
+  end
+
+  def test_branch_settlement_keeps_newer_pending_event
+    with_repo do |cli, root|
+      Brunch::Managers.stub(:build, ManagerDouble.new) do
+        cli.send(:worktree_activate, root)
+        cli.send(:with_state_lock) { |data| data["deleted_branches"] = { "main" => "old-oid" } }
+        cli.define_singleton_method(:local_branch_refs) do
+          with_state_lock { |data| data.fetch("deleted_branches")["main"] = "new-oid" }
+          ["refs/heads/main"]
+        end
+        cli.send(:settle_deleted_branch, "main")
+        assert_equal "new-oid", cli.send(:state).fetch("deleted_branches").fetch("main")
+      end
+    end
+  end
+
+  def test_worker_rechecks_pending_event_after_git_exits
+    with_repo do |cli, root|
+      Brunch::Managers.stub(:build, ManagerDouble.new) do
+        cli.send(:worktree_activate, root)
+        pending = { "oid" => "oid", "git" => { "pid" => 123, "started" => "original" }, "token" => "current" }
+        [nil, pending.merge("token" => "replacement")].each do |replacement|
+          cli.send(:with_state_lock) { |data| (data["deleted_branches"] ||= {})["main"] = pending }
+          Brunch::BranchSettlement.stub(:wait_for, lambda { |_identity|
+            cli.send(:with_state_lock) do |data|
+              if replacement
+                data.fetch("deleted_branches")["main"] = replacement
+              else
+                data.fetch("deleted_branches").delete("main")
+              end
+            end
+          }) do
+            cli.start(%w[branch-settled main current])
+          end
+          actual = cli.send(:state).fetch("deleted_branches", {})["main"]
+          replacement ? assert_equal(replacement, actual) : assert_nil(actual)
+        end
+      end
+    end
+  end
+
+  def test_branch_deletion_keeps_pending_event_if_worker_cannot_start
+    with_repo do |cli, root|
+      Brunch::Managers.stub(:build, ManagerDouble.new) do
+        previous = ENV.fetch("BRUNCH_BRANCH_DELETION_HOOK", nil)
+        ENV["BRUNCH_BRANCH_DELETION_HOOK"] = "1"
+        begin
+          cli.send(:worktree_activate, root)
+          identity = { "pid" => 123, "started" => "original" }
+          Brunch::BranchSettlement.stub(:git_ancestor, identity) do
+            Brunch::BranchSettlement.stub(:spawn_worker, ->(*_args) { raise Errno::EAGAIN }) do
+              _out, error = capture_io { cli.start(%w[branch-deleted main oid]) }
+              assert_includes error, "Could not start branch cleanup worker"
+            end
+          end
+          pending = cli.send(:state).fetch("deleted_branches").fetch("main")
+          assert_equal "oid", pending.fetch("oid")
+          assert_equal identity, pending.fetch("git")
+          Brunch::BranchSettlement.stub(:git_ancestor, identity) do
+            Brunch::BranchSettlement.stub(:spawn_worker, ->(*_args) { flunk "unexpected worker" }) do
+              cli.start(%w[branch-deleted untracked oid])
+            end
+          end
+          refute cli.send(:state).fetch("deleted_branches").key?("untracked")
+        ensure
+          previous ? ENV["BRUNCH_BRANCH_DELETION_HOOK"] = previous : ENV.delete("BRUNCH_BRANCH_DELETION_HOOK")
+        end
+      end
+    end
+  end
+
   def test_deleted_branch_stays_pending_when_reflog_is_unavailable
     with_repo do |cli, root|
       manager = ManagerDouble.new
@@ -500,6 +600,18 @@ class WorktreeContractTest < Minitest::Test
         record = cli.send(:state).fetch("worktrees").values.first
         assert record.fetch("environments").key?("renamed")
         assert record.fetch("environments").key?("main")
+      end
+    end
+  end
+
+  def test_forced_rename_does_not_remove_destination_if_source_environment_is_gone
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        cli.send(:rename_branch_environments, "missing", "main", replace_existing: true)
+        assert cli.send(:state).fetch("worktrees").values.first.fetch("environments").key?("main")
+        refute_includes manager.events, [:remove, "main"]
       end
     end
   end

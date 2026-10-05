@@ -128,6 +128,104 @@ class WorktreeModeTest < Minitest::Test
     assert_branch_deletion_lifecycle
   end
 
+  def test_git_hook_settles_rename_and_delete_after_git_exits_without_another_brunch_command
+    skip "git-hooks-ext 0.6.0 is unavailable" unless recent_git_hooks_ext?
+
+    Dir.mktmpdir do |directory|
+      root = File.join(directory, "repo")
+      Dir.mkdir(root)
+      run_git(root, "init", "--quiet", "-b", "main")
+      run_git(root, "config", "user.email", "test@example.com")
+      run_git(root, "config", "user.name", "Test")
+      File.write(File.join(root, "Gemfile"), "source 'https://rubygems.org'\ngem 'brunch', path: #{File.expand_path('..', __dir__).inspect}\n")
+      File.write(File.join(root, "brunch.yml"), <<~YAML)
+        manager: command
+        commands:
+          start: "true"
+          stop: "true"
+          remove: "printf x >> .removed"
+      YAML
+      run_git(root, "add", ".")
+      run_git(root, "commit", "--quiet", "-m", "initial")
+      Dir.chdir(root) do
+        Brunch::Hooks.install
+        Brunch::CLI.start(["activate"])
+      end
+      run_git(root, "switch", "--quiet", "-c", "feature/topic")
+      run_git(root, "switch", "--quiet", "main")
+
+      hook = File.join(root, ".git", "hooks", "branch-deleted")
+      gate = File.join(directory, "release-hook")
+      File.open(hook, "a") do |file|
+        file.puts "sleep 0.01 until File.exist?(#{gate.inspect})"
+      end
+
+      git_pid = Process.spawn("git", "branch", "-m", "feature/topic", "renamed/topic",
+                              chdir: root, out: File::NULL, err: $stderr)
+      begin
+        wait_for_brunch_state(root) { |data| data.fetch("deleted_branches", {}).key?("feature/topic") }
+        pending = brunch_state(root).fetch("deleted_branches").fetch("feature/topic")
+        assert_kind_of Hash, pending
+        assert_equal git_pid, pending.fetch("git").fetch("pid")
+        assert_equal 0, run_brunch(root, "status")
+        assert brunch_environments(root).key?("feature/topic")
+        refute File.exist?(File.join(root, ".removed"))
+      ensure
+        File.write(gate, "go")
+        _pid, status = Process.waitpid2(git_pid)
+        assert status.success?, "git branch -m failed"
+      end
+      wait_for_brunch_state(root) do |data|
+        data.fetch("worktrees").values.first.fetch("environments").key?("renamed/topic") &&
+          data.fetch("deleted_branches", {}).empty?
+      end
+      assert brunch_environments(root).key?("renamed/topic")
+      refute brunch_environments(root).key?("feature/topic")
+      refute File.exist?(File.join(root, ".removed"))
+
+      File.delete(gate)
+      git_pid = Process.spawn("git", "branch", "-D", "renamed/topic", chdir: root,
+                                                                      out: File::NULL, err: $stderr)
+      begin
+        wait_for_brunch_state(root) { |data| data.fetch("deleted_branches", {}).key?("renamed/topic") }
+        assert_equal 0, run_brunch(root, "status")
+        assert brunch_environments(root).key?("renamed/topic")
+      ensure
+        File.write(gate, "go")
+        _pid, status = Process.waitpid2(git_pid)
+        assert status.success?, "git branch -D failed"
+      end
+      wait_for_brunch_state(root) do |data|
+        !data.fetch("worktrees").values.first.fetch("environments").key?("renamed/topic") &&
+          data.fetch("deleted_branches", {}).empty?
+      end
+      assert_equal "x", File.read(File.join(root, ".removed"))
+
+      run_git(root, "branch", "-m", "main", "primary")
+      wait_for_brunch_state(root) do |data|
+        data.fetch("worktrees").values.first.fetch("current") == "primary" && data.fetch("deleted_branches", {}).empty?
+      end
+      assert brunch_environments(root).key?("primary")
+      refute brunch_environments(root).key?("main")
+      assert_equal "x", File.read(File.join(root, ".removed"))
+
+      run_git(root, "switch", "--quiet", "-c", "source")
+      run_git(root, "switch", "--quiet", "primary")
+      run_git(root, "switch", "--quiet", "-c", "target")
+      run_git(root, "switch", "--quiet", "primary")
+      source_project = brunch_environments(root).fetch("source").fetch("project")
+      target_project = brunch_environments(root).fetch("target").fetch("project")
+      refute_equal source_project, target_project
+      run_git(root, "branch", "-M", "source", "target")
+      wait_for_brunch_state(root) do |data|
+        environments = data.fetch("worktrees").values.first.fetch("environments")
+        environments["target"]&.fetch("project") == source_project && !environments.key?("source") &&
+          data.fetch("deleted_branches", {}).empty?
+      end
+      assert_equal "xx", File.read(File.join(root, ".removed"))
+    end
+  end
+
   def test_reftable_rename_preserves_environment_without_deletion_event
     version, = Open3.capture2("git", "--version")
     git_version = version[/git version (\d+(?:\.\d+)+)/, 1]
@@ -179,6 +277,33 @@ class WorktreeModeTest < Minitest::Test
   end
 
   private
+
+  def recent_git_hooks_ext?
+    output, status = Open3.capture2("ghe", "--version")
+    status.success? && Gem::Version.new(output.split.last) >= Gem::Version.new("0.6.0")
+  rescue Errno::ENOENT
+    false
+  end
+
+  def brunch_state(root)
+    JSON.parse(File.read(File.join(root, ".git", "brunch", "state.json")))
+  end
+
+  def brunch_environments(root)
+    brunch_state(root).fetch("worktrees").values.first.fetch("environments")
+  end
+
+  def wait_for_brunch_state(root)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 15
+    loop do
+      data = brunch_state(root)
+      return if yield(data)
+
+      flunk "Timed out waiting for Brunch branch state: #{data.inspect}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+
+      sleep 0.02
+    end
+  end
 
   def assert_branch_deletion_lifecycle(*init_arguments)
     Dir.mktmpdir do |directory|

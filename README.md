@@ -301,15 +301,20 @@ If a custom `remove` command depends on project files, those files must be commi
 `brunch cleanup` removes environments belonging to worktrees that no longer exist.
 
 With `git-hooks-ext` 0.6.0+, deleting a local branch queues its Brunch
-environments for removal. On the next regular Brunch command, such as
-`brunch status` or `brunch cleanup`, Brunch checks the current refs and removes
-the branch's managed resources, including Compose containers and volumes.
-It also checks for missing branches when Git emits no deletion event. This
-delay protects environments when `git branch -m` reports a deletion before
-creating the renamed branch. A renamed branch keeps its environment under the
-new name. If Git reflogs are unavailable and Brunch cannot distinguish a
-rename from a deletion, it keeps the environment. A later `brunch restart`
-recreates the container in the same Compose project, preserving named volumes.
+environments for removal. A detached worker waits for the Git process that
+triggered the hook to exit, then checks the final refs and reflogs. A rename
+keeps its environment under the new name; a deletion removes the managed
+resources, including Compose containers and volumes. A Brunch command run
+while the identified Git process is still working leaves the queued environment
+alone. If the process cannot be identified or the worker cannot start, the next
+regular Brunch command after Git exits, such as `brunch status` or
+`brunch cleanup`, performs the check. Brunch also checks for
+missing branches when Git emits no deletion event, on the next regular command.
+If Git reflogs are unavailable and Brunch cannot distinguish a rename from a
+deletion, it keeps the environment. A later `brunch restart` recreates the
+container in the same Compose project, preserving named volumes.
+For `git branch -M old target`, when `target` already has a Brunch environment,
+Brunch removes that overwritten environment and moves `old` to `target`.
 
 ## Commands
 
