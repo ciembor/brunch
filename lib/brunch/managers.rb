@@ -98,6 +98,13 @@ module Brunch
         compose(entry, "logs", *arguments)
       end
 
+      def render_compose(entry)
+        output, error, status = Open3.capture3(environment(entry), *source_compose_command(entry, "config"), **compose_options(entry))
+        return [output, nil] if status.success?
+
+        [nil, error]
+      end
+
       def port_available?(port)
         ports, = Open3.capture2(*ports_command)
         return false if ports.match?(/:#{port}->/)
@@ -125,10 +132,18 @@ module Brunch
 
       def compose_command(entry, *arguments)
         directory = compose_directory(entry)
-        compose_file = File.join(directory, entry.fetch("compose_file"))
+        compose_file = entry.fetch("rendered_compose", File.join(directory, entry.fetch("compose_file")))
         ["docker", "compose", "--project-name", entry.fetch("project"), "--project-directory", directory, "--file",
          compose_file, *arguments]
       end
+
+      def source_compose_command(entry, *arguments)
+        directory = entry.fetch("snapshot")
+        ["docker", "compose", "--project-name", entry.fetch("project"), "--project-directory", directory, "--file",
+         File.join(directory, entry.fetch("compose_file")), *arguments]
+      end
+
+      def compose_options(_entry) = {}
 
       def compose_directory(entry)
         source = entry.fetch("snapshot")
@@ -138,7 +153,7 @@ module Brunch
       def ports_command = ["docker", "ps", "--format", "{{.Ports}}"]
 
       def compose(entry, *arguments)
-        system(environment(entry), *compose_command(entry, *arguments))
+        system(environment(entry), *compose_command(entry, *arguments), **compose_options(entry))
       end
     end
 
@@ -159,14 +174,21 @@ module Brunch
 
       def compose_command(entry, *arguments)
         directory = compose_directory(entry)
-        compose_file = File.join(directory, entry.fetch("compose_file"))
+        compose_file = entry.fetch("rendered_compose", File.join(directory, entry.fetch("compose_file")))
         ["podman", "compose", "-p", entry.fetch("project"), "-f", compose_file, *arguments]
       end
+
+      def source_compose_command(entry, *arguments)
+        directory = entry.fetch("snapshot")
+        ["podman", "compose", "-p", entry.fetch("project"), "-f", File.join(directory, entry.fetch("compose_file")), *arguments]
+      end
+
+      def compose_options(entry) = { chdir: entry.fetch("snapshot") }
 
       def ports_command = ["podman", "ps", "--format", "{{.Ports}}"]
 
       def compose(entry, *arguments)
-        system(environment(entry), *compose_command(entry, *arguments), chdir: compose_directory(entry))
+        system(environment(entry), *compose_command(entry, *arguments), **compose_options(entry))
       end
     end
 

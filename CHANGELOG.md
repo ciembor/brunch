@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 - 2026-10-16
+
+- Add opt-in `ports: auto` for Docker Compose and Podman Compose. Brunch now
+  renders a private Compose configuration and assigns every published host port
+  independently for each worktree, without modifying the repository file.
+- Add `brunch ports` and `brunch port SERVICE CONTAINER_PORT` for discovering
+  the complete set of assigned host ports.
+
 ## 1.0.0 - 2026-10-16
 
 - Recover automatically when a stopped Compose environment cannot resume: Brunch

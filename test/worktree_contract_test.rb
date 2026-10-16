@@ -102,8 +102,10 @@ class WorktreeContractTest < Minitest::Test
       assert_equal 0, cli.send(:worktree_command, ["cleanup"])
       assert_equal 0, cli.send(:worktree_command, ["status"])
       assert_equal 0, cli.send(:worktree_command, ["list"])
+      assert_equal 0, cli.send(:worktree_command, ["ports"])
       assert_equal 0, cli.send(:worktree_command, ["watch"])
       assert_equal 0, cli.send(:worktree_command, ["port"])
+      assert_equal 0, cli.send(:worktree_command, %w[port web 3000])
       assert_equal 0, cli.send(:worktree_command, ["logs", "--follow"])
       assert_equal 0, cli.send(:worktree_command, ["run", "--", "true"])
       assert_equal 64, cli.send(:worktree_command, ["exec", "--", "true"])
@@ -201,6 +203,96 @@ class WorktreeContractTest < Minitest::Test
       record, active = cli.send(:current_worktree_entry, cli.send(:state))
       assert_equal root, record.fetch("path")
       assert_equal "services: {}\n", File.read(File.join(active.fetch("control"), "compose.yaml"))
+    end
+  end
+
+  def test_auto_ports_render_a_private_compose_file_and_persist_assignments
+    with_repo do |cli, root|
+      File.write(File.join(root, "compose.yaml"), "services: {}\n")
+      File.write(File.join(root, "brunch.yml"), "manager: docker_compose\nports: auto\n")
+      manager = ManagerDouble.new
+      manager.define_singleton_method(:render_compose) do |_entry|
+        [<<~YAML, nil]
+          services:
+            web:
+              ports:
+                - target: 3000
+                  published: "3000"
+                  protocol: tcp
+            mail:
+              ports:
+                - target: 8025
+                  published: "8025"
+                  protocol: tcp
+        YAML
+      end
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        record = cli.send(:state).fetch("worktrees").values.first
+        entry = record.fetch("environments").fetch("main")
+        hosts = entry.fetch("ports").map { |mapping| mapping.fetch("host") }
+        assert_equal [3000, 8025], hosts
+        assert_equal 3000, entry.fetch("port")
+        assert_path_exists entry.fetch("rendered_compose")
+        rendered = YAML.safe_load_file(entry.fetch("rendered_compose"))
+        assert_equal 8025, rendered.fetch("services").fetch("mail").fetch("ports").first.fetch("published")
+        output, = capture_io { cli.send(:worktree_port, "mail", "8025") }
+        assert_equal "8025\n", output
+        output, = capture_io { cli.send(:worktree_status) }
+        assert_includes output, "mail:8025/tcp → 127.0.0.1:8025"
+      end
+    end
+  end
+
+  def test_auto_ports_reuse_known_mappings_and_fall_back_when_preferred_port_is_taken
+    with_repo do |cli, _root|
+      manager = ManagerDouble.new
+      data = { "worktrees" => {
+        "other" => { "port" => 3001, "ports" => [{ "service" => "other", "target" => 3001, "protocol" => "tcp", "host_ip" => "", "host" => 3001 }] },
+        "current" => { "port" => 3000, "ports" => [{ "service" => "web", "target" => 3000, "protocol" => "tcp", "host_ip" => "", "host" => 3000 }] }
+      } }
+      mappings = [{ "service" => "web", "target" => 3000, "protocol" => "tcp", "host_ip" => "", "published" => 3000 },
+                  { "service" => "mail", "target" => 8025, "protocol" => "tcp", "host_ip" => "", "published" => 3001 }]
+      assignments = cli.send(:reserve_compose_ports, "current", data, manager, mappings)
+      hosts = assignments.map { |mapping| mapping.fetch("host") }
+      assert_equal [3000, 3002], hosts
+      assert_equal 2, data.fetch("worktrees").fetch("current").fetch("ports").length
+    end
+  end
+
+  def test_auto_ports_reports_render_and_yaml_errors_and_formats_port_labels
+    with_repo do |cli, root|
+      entry = { "compose_file" => "compose.yaml", "control" => File.join(root, "control"), "project" => "project",
+                "snapshot" => root, "port" => 3000, "ref" => "main" }
+      manager = ManagerDouble.new
+      render_result = [nil, "broken"]
+      manager.define_singleton_method(:render_compose) { |_entry| render_result }
+      error = assert_raises(SystemExit) { cli.send(:render_compose_ports, root, entry, manager) }
+      assert_equal 1, error.status
+      render_result = ["not: [yaml", nil]
+      assert_raises(Brunch::CLI::ConfigurationError) { cli.send(:render_compose_ports, root, entry, manager) }
+      port_entry = entry.merge("ports" => [{ "service" => "mail", "target" => 8025, "protocol" => "tcp", "host" => 8025 }])
+      assert_equal "mail:8025/tcp→8025", cli.send(:port_label, port_entry)
+      id = cli.send(:worktree_identity, root)
+      cli.send(:with_state_lock) do |data|
+        data["worktrees"][id] = { "path" => root, "current" => "main", "environments" => { "main" => port_entry } }
+      end
+      error = assert_raises(Brunch::CLI::OperationError) { cli.send(:worktree_port, "missing", "1") }
+      assert_includes error.message, "No published port"
+    end
+  end
+
+  def test_auto_ports_accepts_a_compose_file_without_published_ports
+    with_repo do |cli, root|
+      entry = { "compose_file" => "compose.yaml", "control" => File.join(root, "control"), "project" => "project",
+                "snapshot" => root, "port" => 3000, "ref" => "main" }
+      manager = ManagerDouble.new
+      manager.define_singleton_method(:render_compose) { |_entry| ["services:\n  worker:\n    image: busybox\n", nil] }
+      id = cli.send(:worktree_identity, root)
+      cli.send(:with_state_lock) { |data| data["worktrees"][id] = { "path" => root, "port" => 3000, "environments" => {} } }
+      rendered = cli.send(:render_compose_ports, root, entry, manager)
+      assert_empty rendered.fetch("ports")
+      assert_equal 3000, rendered.fetch("port")
     end
   end
 

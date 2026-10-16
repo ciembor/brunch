@@ -82,6 +82,7 @@ class CliContractTest < Minitest::Test
       default = cli.send(:configuration)
       assert_equal "docker_compose", default.fetch("manager")
       assert_equal 3000, default.fetch("preferred_port")
+      assert_equal "manual", default.fetch("ports")
       refute default.key?("mode")
       File.write(File.join(root, "brunch.yml"), "manager: command\npreferred_port: 4000\ncommands:\n  start: 'true'\n  stop: 'true'\n  remove: 'true'\n")
       assert_equal 4000, cli.send(:configuration).fetch("preferred_port")
@@ -89,7 +90,7 @@ class CliContractTest < Minitest::Test
 
       invalid = [
         "- invalid\n", "mode: branches\n", "port_mode: shared\n", "lifecycle: active_only\n",
-        "shared_port: 3000\n", "preferred_port: 0\n", "preferred_port: 49152\n",
+        "shared_port: 3000\n", "ports: automatic\n", "preferred_port: 0\n", "preferred_port: 49152\n",
         "preferred_port: '3000'\n", "manager: missing\n", "compose_file: ''\n",
         "manager: local_process\n", "manager: command\n", "manager: command\ncommands: []\n",
         "manager: command\ncommands:\n  start: 'true'\n  stop: 'true'\n  remove: 'true'\n  typo: 'true'\n",
@@ -100,6 +101,10 @@ class CliContractTest < Minitest::Test
         File.write(File.join(root, "brunch.yml"), contents)
         assert_raises(Brunch::CLI::ConfigurationError) { cli.send(:configuration) }
       end
+      File.write(File.join(root, "brunch.yml"), "manager: podman_compose\nports: auto\n")
+      assert_equal "auto", cli.send(:configuration).fetch("ports")
+      File.write(File.join(root, "brunch.yml"), "manager: command\nports: auto\ncommands:\n  start: 'true'\n  stop: 'true'\n  remove: 'true'\n")
+      assert_raises(Brunch::CLI::ConfigurationError) { cli.send(:configuration) }
       File.write(File.join(root, "brunch.yml"), "preferred_port: [\n")
       error = assert_raises(Brunch::CLI::ConfigurationError) { cli.send(:configuration) }
       assert_includes error.message, "Invalid brunch.yml"

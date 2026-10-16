@@ -88,6 +88,29 @@ class ManagersContractTest < Minitest::Test
     end
   end
 
+  def test_compose_renders_source_configuration_for_both_engines
+    with_entry do |entry|
+      File.write(File.join(entry.fetch("snapshot"), "compose.yaml"), "services: {}\n")
+      success = Struct.new(:success?).new(true)
+      failure = Struct.new(:success?).new(false)
+      [Brunch::Managers::DockerCompose, Brunch::Managers::PodmanCompose].each do |klass|
+        manager = klass.new({})
+        captured = []
+        Open3.stub(:capture3, lambda { |*arguments, **options|
+          captured << [arguments, options]
+          ["services: {}\n", "", success]
+        }) do
+          assert_equal ["services: {}\n", nil], manager.render_compose(entry)
+        end
+        assert_includes captured.first.first, File.join(entry.fetch("snapshot"), "compose.yaml")
+        assert_equal(entry.fetch("snapshot"), captured.first.last[:chdir]) if klass == Brunch::Managers::PodmanCompose
+        Open3.stub(:capture3, ["", "invalid compose", failure]) do
+          assert_equal [nil, "invalid compose"], manager.render_compose(entry)
+        end
+      end
+    end
+  end
+
   def test_compose_port_probe_fallback_and_resource_removal
     with_entry do |entry|
       manager = Brunch::Managers::DockerCompose.new({})

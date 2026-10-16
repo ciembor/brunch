@@ -96,6 +96,44 @@ preferred_port: 4000
 
 Port assignments are persisted per worktree in `.git/brunch/state.json`.
 
+### Existing Compose projects with several ports
+
+By default Brunch manages the `BRUNCH_PORT` variable shown above. To run an
+existing Compose project that publishes several fixed host ports, opt in with:
+
+```yaml
+ports: auto
+```
+
+Brunch renders the current Compose configuration, reserves every published
+host port, and writes a private generated configuration under `.git/brunch/`.
+It never changes the repository's `compose.yaml`. The first worktree keeps the
+declared ports whenever they are free; additional worktrees receive free ports
+for every published service port.
+
+For example, this requires no variables in the Compose file:
+
+```yaml
+services:
+  web:
+    ports:
+      - "3000:3000"
+      - "5173:5173"
+  mail:
+    ports:
+      - "8025:8025"
+```
+
+`brunch ports` displays all assigned mappings. Query one mapping with:
+
+```bash
+brunch port web 3000
+```
+
+Only `ports:` entries that publish a host port are managed; internal service
+ports and `expose:` remain unchanged. `BRUNCH_PORT` continues to contain the
+first published port for compatibility with existing scripts.
+
 ## Getting started
 
 Commit `brunch.yml` and the application configuration first. The repository must contain at least one commit.
@@ -185,12 +223,12 @@ Then:
 cd ../feature-a
 
 brunch port
-brunch list
+brunch ports
 ```
 
 `brunch port` prints the current worktree's port.
 
-`brunch list` groups the current and previously activated branches under each
+`brunch ports` groups the current and previously activated branches under each
 worktree. Stopped branches appear in gray and retain their worktree's port for
 the next activation.
 

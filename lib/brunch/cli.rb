@@ -10,7 +10,7 @@ module Brunch
     include WorktreeMode
 
     PORT_RANGE = (1024..49_151)
-    CONFIGURATION_KEYS = %w[manager compose_file command commands preferred_port].freeze
+    CONFIGURATION_KEYS = %w[manager compose_file command commands preferred_port ports].freeze
     COMMAND_KEYS = %w[create start stop remove status health logs].freeze
 
     class ConfigurationError < StandardError; end
@@ -90,7 +90,8 @@ module Brunch
       path = File.join(root, "brunch.yml")
       configured = File.file?(path) ? YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {} : {}
       validate_configuration!(configured)
-      { "manager" => "docker_compose", "compose_file" => "compose.yaml", "preferred_port" => 3000 }.merge(configured)
+      { "manager" => "docker_compose", "compose_file" => "compose.yaml", "preferred_port" => 3000,
+        "ports" => "manual" }.merge(configured)
     rescue Psych::Exception => e
       raise ConfigurationError, "Invalid brunch.yml: #{e.message}"
     end
@@ -101,7 +102,8 @@ module Brunch
       unknown = configured.keys - CONFIGURATION_KEYS
       raise ConfigurationError, "Unknown brunch.yml key(s): #{unknown.join(', ')}." unless unknown.empty?
 
-      value = { "manager" => "docker_compose", "compose_file" => "compose.yaml", "preferred_port" => 3000 }.merge(configured)
+      value = { "manager" => "docker_compose", "compose_file" => "compose.yaml", "preferred_port" => 3000,
+                "ports" => "manual" }.merge(configured)
       unless %w[docker_compose podman_compose local_process command].include?(value["manager"])
         raise ConfigurationError, "Unknown Brunch manager: #{value['manager']}."
       end
@@ -110,6 +112,10 @@ module Brunch
       end
       if %w[docker_compose podman_compose].include?(value["manager"]) && (!value["compose_file"].is_a?(String) || value["compose_file"].empty?)
         raise ConfigurationError, "compose_file must be a non-empty string."
+      end
+      raise ConfigurationError, "ports must be manual or auto." unless %w[manual auto].include?(value["ports"])
+      if value["ports"] == "auto" && !%w[docker_compose podman_compose].include?(value["manager"])
+        raise ConfigurationError, "ports: auto requires a Docker Compose or Podman Compose manager."
       end
       if value["manager"] == "local_process" && (!value["command"].is_a?(String) || value["command"].empty?)
         raise ConfigurationError, "local_process manager requires a non-empty command."

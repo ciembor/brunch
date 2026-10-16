@@ -24,14 +24,16 @@ module Brunch
       in ["branch-settled", ref, token] then settle_deleted_branch(ref, token)
       in ["cleanup"] | ["register", _] then worktree_cleanup
       in ["status"] then worktree_status
-      in ["list"] then worktree_ports
+      in ["list"] | ["ports"] then worktree_ports
       in ["watch"] then worktree_watch
       in ["port"] then worktree_port
+      in ["port", service, target] then worktree_port(service, target)
       in ["logs", *arguments] then worktree_logs(arguments)
       in ["run", "--", *command] if !command.empty? then worktree_run(command)
       in ["doctor"] then worktree_doctor
       else
-        warn "Usage: brunch {activate|start <current-ref>|stop|restart|status|list|watch|port|logs [args]|run -- <cmd>|doctor|cleanup}"
+        warn "Usage: brunch {activate|start <current-ref>|stop|restart|status|list|ports|watch|" \
+             "port [service container-port]|logs [args]|run -- <cmd>|doctor|cleanup}"
         return 64
       end
       0
@@ -87,10 +89,70 @@ module Brunch
     end
 
     def worktree_port_for(id, data, manager, base: preferred_port)
-      reserved = data.fetch("worktrees", {}).values.map { |record| record["port"] }
+      reserved = reserved_ports(data)
       (base..CLI::PORT_RANGE.end).chain(CLI::PORT_RANGE.begin...base).find do |port|
         !reserved.include?(port) && manager.port_available?(port)
       end || abort("No free port for worktree #{id}.")
+    end
+
+    def reserved_ports(data)
+      assigned_ports(data).uniq
+    end
+
+    def assigned_ports(data)
+      data.fetch("worktrees", {}).values.flat_map do |record|
+        [record["port"], *Array(record["ports"]).map { |mapping| mapping["host"] }]
+      end.compact
+    end
+
+    def auto_ports?(config) = config.fetch("ports") == "auto"
+
+    def reserve_compose_ports(id, data, manager, mappings)
+      record = data.fetch("worktrees").fetch(id)
+      known = Array(record["ports"])
+      all_reserved = reserved_ports(data)
+      assignments = mappings.map do |mapping|
+        existing = known.find { |candidate| ComposePorts.key(candidate) == ComposePorts.key(mapping) }
+        next existing if existing
+
+        preferred = mapping.fetch("published")
+        host = if known.empty? && record["port"] == preferred
+                 preferred
+               elsif !all_reserved.include?(preferred) && manager.port_available?(preferred)
+                 preferred
+               else
+                 worktree_port_for(id, data, manager, base: preferred)
+               end
+        assignment = mapping.merge("host" => host)
+        known << assignment
+        all_reserved << host
+        assignment
+      end
+      record["ports"] = known
+      record["port"] = assignments.first.fetch("host") unless assignments.empty?
+      assignments
+    end
+
+    def render_compose_ports(path, entry, manager)
+      rendered, error = manager.render_compose(entry)
+      abort "Could not render #{entry.fetch('compose_file')}: #{error.strip}" unless rendered
+
+      document = YAML.safe_load(rendered, permitted_classes: [], aliases: false)
+      mappings = ComposePorts.extract(document)
+      assignments = nil
+      with_state_lock do |data|
+        assignments = reserve_compose_ports(worktree_identity(path), data, manager, mappings)
+      end
+      ComposePorts.rewrite(document, assignments)
+      target = File.join(entry.fetch("control"), "brunch-compose.yaml")
+      FileUtils.mkdir_p(File.dirname(target))
+      File.write(target, YAML.dump(document))
+      entry["ports"] = assignments
+      entry["port"] = assignments.first.fetch("host") unless assignments.empty?
+      entry["rendered_compose"] = target
+      entry
+    rescue Psych::Exception => e
+      raise CLI::ConfigurationError, "Could not parse rendered Compose configuration: #{e.message}"
     end
 
     def worktree_activate(path, force: false)
@@ -150,13 +212,16 @@ module Brunch
         if %w[docker_compose podman_compose].include?(config.fetch("manager"))
           source_file = File.join(path, compose_file)
           abort "Missing #{compose_file} in #{path}." unless File.file?(source_file)
-          destination = File.join(control, compose_file)
-          FileUtils.mkdir_p(File.dirname(destination))
-          FileUtils.cp(source_file, destination)
+          unless auto_ports?(config)
+            destination = File.join(control, compose_file)
+            FileUtils.mkdir_p(File.dirname(destination))
+            FileUtils.cp(source_file, destination)
+          end
         end
         entry = { "source_type" => "worktree", "snapshot" => path, "control" => control,
                   "ref" => ref, "head" => head, "port" => port, "project" => project,
                   "compose_file" => compose_file, "configuration" => config, "status" => "starting" }
+        entry = render_compose_ports(path, entry, manager) if auto_ports?(config)
         with_state_lock do |data|
           record = data.fetch("worktrees").fetch(id)
           record.fetch("environments")[ref] = entry
@@ -167,7 +232,7 @@ module Brunch
         with_state_lock do |data|
           data.fetch("worktrees").fetch(id).fetch("environments")[ref] = entry.merge("status" => "running")
         end
-        puts "Started #{ref} in #{path} at http://127.0.0.1:#{port}"
+        puts "Started #{ref} in #{path} at http://127.0.0.1:#{entry.fetch('port')}"
       end
     end
 
@@ -405,7 +470,8 @@ module Brunch
       record, current = current_worktree_entry(data)
       return puts "No Brunch environment in this worktree." unless current
 
-      puts "#{current.fetch('ref')} (#{record.fetch('path')}): #{worktree_manager(current).status(current)}, http://127.0.0.1:#{record.fetch('port')}"
+      puts "#{current.fetch('ref')} (#{record.fetch('path')}): #{worktree_manager(current).status(current)}, http://127.0.0.1:#{current.fetch('port')}"
+      print_port_mappings(current)
     end
 
     def worktree_ports
@@ -422,11 +488,11 @@ module Brunch
           prefix = index == branches.length - 1 ? "  └─" : "  ├─"
           running = ref == record["current"] && entry["status"] == "running"
           unless running
-            puts color("#{prefix} ○ #{ref}  #{entry.fetch('port')}", 90)
+            puts color("#{prefix} ○ #{ref}  #{port_label(entry)}", 90)
             next
           end
 
-          puts "#{prefix} #{color("● #{ref}", 32)}  #{entry.fetch('port')}"
+          puts "#{prefix} #{color("● #{ref}", 32)}  #{port_label(entry)}"
         end
       end
     end
@@ -445,11 +511,31 @@ module Brunch
       puts "\nStopped watching."
     end
 
-    def worktree_port
-      record, = current_worktree_entry(state)
-      raise CLI::OperationError, "No Brunch environment in this worktree." unless record
+    def worktree_port(service = nil, target = nil)
+      _record, entry = current_worktree_entry(state)
+      raise CLI::OperationError, "No Brunch environment in this worktree." unless entry
 
-      puts record.fetch("port")
+      return puts entry.fetch("port") unless service
+
+      mapping = Array(entry["ports"]).find do |candidate|
+        candidate["service"] == service && candidate["target"].to_s == target
+      end
+      raise CLI::OperationError, "No published port for #{service}:#{target}." unless mapping
+
+      puts mapping.fetch("host")
+    end
+
+    def port_label(entry)
+      mappings = Array(entry["ports"])
+      return entry.fetch("port").to_s if mappings.empty?
+
+      mappings.map { |mapping| "#{mapping.fetch('service')}:#{mapping.fetch('target')}/#{mapping.fetch('protocol')}→#{mapping.fetch('host')}" }.join(", ")
+    end
+
+    def print_port_mappings(entry)
+      Array(entry["ports"]).each do |mapping|
+        puts "  #{mapping.fetch('service')}:#{mapping.fetch('target')}/#{mapping.fetch('protocol')} → 127.0.0.1:#{mapping.fetch('host')}"
+      end
     end
 
     def worktree_logs(arguments)
@@ -469,7 +555,7 @@ module Brunch
 
     def worktree_doctor
       data = state
-      ports = data.fetch("worktrees", {}).values.map { |record| record["port"] }
+      ports = assigned_ports(data)
       paths = worktree_paths
       hooks_dir = git_output("rev-parse", "--git-path", "hooks")
       checks = {

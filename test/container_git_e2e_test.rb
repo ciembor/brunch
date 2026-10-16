@@ -124,6 +124,38 @@ class ContainerGitE2ETest < Minitest::Test
     end
   end
 
+  def test_auto_ports_rewrites_every_published_compose_port_for_parallel_worktrees
+    with_repository do |main, directory|
+      web_port = free_port
+      auxiliary_port = free_port
+      File.write(File.join(main, "brunch.yml"), configuration(ports: "auto"))
+      File.write(File.join(main, "compose.yaml"), auto_ports_compose_file(web_port, auxiliary_port))
+      commit_fixture(main)
+      feature = File.join(directory, "feature")
+      run_git(main, "worktree", "add", "--quiet", "-b", "feature", feature)
+
+      run_cli(main, "activate")
+      run_cli(feature, "activate")
+      main_entry = state(main).fetch("worktrees").values.find { |record| record.fetch("path") == File.realpath(main) }
+      feature_entry = state(main).fetch("worktrees").values.find { |record| record.fetch("path") == File.realpath(feature) }
+      main_ports = main_entry.fetch("environments").fetch("main").fetch("ports")
+      feature_ports = feature_entry.fetch("environments").fetch("feature").fetch("ports")
+
+      assert_equal 2, main_ports.length
+      assert_equal 2, feature_ports.length
+      main_hosts = main_ports.map { |mapping| mapping.fetch("host") }
+      feature_hosts = feature_ports.map { |mapping| mapping.fetch("host") }
+      refute_equal main_hosts, feature_hosts
+      assert_equal web_port, main_ports.find { |mapping| mapping.fetch("target") == 3000 }.fetch("host")
+      assert_equal auxiliary_port, main_ports.find { |mapping| mapping.fetch("target") == 3001 }.fetch("host")
+      assert_http(main_ports.find { |mapping| mapping.fetch("target") == 3000 }.fetch("host"), "main\n")
+      assert_http(main_ports.find { |mapping| mapping.fetch("target") == 3001 }.fetch("host"), "main\n")
+      assert_http(feature_ports.find { |mapping| mapping.fetch("target") == 3000 }.fetch("host"), "main\n")
+      assert_equal feature_ports.find { |mapping| mapping.fetch("target") == 3001 }.fetch("host").to_s,
+                   run_cli(feature, "port", "auxiliary", "3001")
+    end
+  end
+
   def test_git_checkout_hook_automatically_switches_live_container
     skip "git-hooks-ext is unavailable" unless system("ghe", "--version", out: File::NULL, err: File::NULL)
 
@@ -166,9 +198,10 @@ class ContainerGitE2ETest < Minitest::Test
     end
   end
 
-  def configuration(port = nil)
+  def configuration(port = nil, ports: "manual")
     lines = ["manager: #{@manager_name}"]
     lines << "preferred_port: #{port}" if port
+    lines << "ports: #{ports}" unless ports == "manual"
     "#{lines.join("\n")}\n"
   end
 
@@ -186,6 +219,28 @@ class ContainerGitE2ETest < Minitest::Test
           stop_grace_period: 1s
       volumes:
         data:
+    YAML
+  end
+
+  def auto_ports_compose_file(web_port, auxiliary_port)
+    <<~YAML
+      services:
+        web:
+          image: busybox:1.36
+          command: sh -c 'httpd -f -p 3000 -h /site'
+          volumes:
+            - .:/site:ro
+          ports:
+            - "127.0.0.1:#{web_port}:3000"
+          stop_grace_period: 1s
+        auxiliary:
+          image: busybox:1.36
+          command: sh -c 'httpd -f -p 3001 -h /site'
+          volumes:
+            - .:/site:ro
+          ports:
+            - "127.0.0.1:#{auxiliary_port}:3001"
+          stop_grace_period: 1s
     YAML
   end
 
