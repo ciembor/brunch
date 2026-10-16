@@ -111,6 +111,20 @@ class ManagersContractTest < Minitest::Test
     end
   end
 
+  def test_podman_uses_control_directory_after_worktree_source_is_removed
+    with_entry do |entry|
+      manager = Brunch::Managers::PodmanCompose.new({})
+      FileUtils.rm_rf(entry.fetch("snapshot"))
+      calls = []
+      manager.define_singleton_method(:system) do |*_arguments, **options|
+        calls << options
+        true
+      end
+      assert manager.stop(entry.merge("source_type" => "worktree"))
+      assert_equal entry.fetch("control"), calls.last.fetch(:chdir)
+    end
+  end
+
   def test_compose_port_probe_fallback_and_resource_removal
     with_entry do |entry|
       manager = Brunch::Managers::DockerCompose.new({})

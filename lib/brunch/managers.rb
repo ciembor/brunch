@@ -99,7 +99,7 @@ module Brunch
       end
 
       def render_compose(entry)
-        output, error, status = Open3.capture3(environment(entry), *source_compose_command(entry, "config"), **compose_options(entry))
+        output, error, status = Open3.capture3(environment(entry), *source_compose_command(entry, "config"), **source_compose_options(entry))
         return [output, nil] if status.success?
 
         [nil, error]
@@ -144,6 +144,7 @@ module Brunch
       end
 
       def compose_options(_entry) = {}
+      def source_compose_options(entry) = compose_options(entry)
 
       def compose_directory(entry)
         source = entry.fetch("snapshot")
@@ -183,7 +184,8 @@ module Brunch
         ["podman", "compose", "-p", entry.fetch("project"), "-f", File.join(directory, entry.fetch("compose_file")), *arguments]
       end
 
-      def compose_options(entry) = { chdir: entry.fetch("snapshot") }
+      def compose_options(entry) = { chdir: compose_directory(entry) }
+      def source_compose_options(entry) = { chdir: entry.fetch("snapshot") }
 
       def ports_command = ["podman", "ps", "--format", "{{.Ports}}"]
 

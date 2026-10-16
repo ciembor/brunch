@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1 - 2026-10-16
+
+- Support the short port notation that older Podman Compose versions preserve
+  in rendered configuration when `ports: auto` is enabled.
+- Run Podman Compose cleanup from Brunch's control directory after a worktree
+  has been removed.
+
 ## 1.1.0 - 2026-10-16
 
 - Add opt-in `ports: auto` for Docker Compose and Podman Compose. Brunch now

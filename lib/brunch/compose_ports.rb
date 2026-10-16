@@ -29,7 +29,7 @@ module Brunch
           mapping = published_mapping(service, port)
           next port unless mapping
 
-          port.merge("published" => indexed.fetch(key(mapping)))
+          rewrite_port(port, mapping, indexed.fetch(key(mapping)))
         end
       end
       document
@@ -40,7 +40,9 @@ module Brunch
     end
 
     def published_mapping(service, port)
-      raise CLI::ConfigurationError, "Unsupported Compose port for #{service}; use Compose long syntax with ports: auto." unless port.is_a?(Hash)
+      return short_mapping(service, port) if port.is_a?(String)
+
+      raise CLI::ConfigurationError, "Unsupported Compose port for #{service}." unless port.is_a?(Hash)
       return unless port.key?("published") && !port["published"].to_s.empty?
 
       published = integer(port["published"], "published host port for #{service}")
@@ -52,6 +54,30 @@ module Brunch
         "host_ip" => port.fetch("host_ip", "").to_s, "published" => published }
     end
     private_class_method :published_mapping
+
+    def rewrite_port(port, mapping, host)
+      return port.merge("published" => host) if port.is_a?(Hash)
+
+      value = [mapping.fetch("host_ip"), host, mapping.fetch("target")].reject { |part| part == "" }.join(":")
+      mapping.fetch("protocol") == "tcp" ? value : "#{value}/#{mapping.fetch('protocol')}"
+    end
+    private_class_method :rewrite_port
+
+    def short_mapping(service, port)
+      value, protocol = port.split("/", 2)
+      parts = value.split(":")
+      raise CLI::ConfigurationError, "Unsupported Compose port for #{service}: #{port.inspect}." unless (2..3).cover?(parts.length)
+
+      target = integer(parts.pop, "container port for #{service}")
+      published = integer(parts.pop, "published host port for #{service}")
+      host_ip = parts.pop.to_s
+      normalized_protocol = protocol || "tcp"
+      raise CLI::ConfigurationError, "Unsupported protocol #{normalized_protocol.inspect} for #{service}." unless %w[tcp udp].include?(normalized_protocol)
+
+      { "service" => service.to_s, "target" => target, "protocol" => normalized_protocol,
+        "host_ip" => host_ip, "published" => published }
+    end
+    private_class_method :short_mapping
 
     def integer(value, description)
       Integer(value).tap do |port|

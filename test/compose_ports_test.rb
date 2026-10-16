@@ -28,6 +28,16 @@ class ComposePortsTest < Minitest::Test
     assert_equal 41_002, document.fetch("services").fetch("dns").fetch("ports").first.fetch("published")
   end
 
+  def test_extracts_short_compose_ports_left_by_older_podman_compose
+    document = { "services" => { "web" => { "ports" => ["127.0.0.1:3000:3000", "5173:5173/udp"] } } }
+    mappings = Brunch::ComposePorts.extract(document)
+    actual = mappings.map { |mapping| mapping.values_at("host_ip", "published", "target", "protocol") }
+    assert_equal [["127.0.0.1", 3000, 3000, "tcp"], ["", 5173, 5173, "udp"]],
+                 actual
+    Brunch::ComposePorts.rewrite(document, mappings.map { |mapping| mapping.merge("host" => mapping.fetch("published") + 1000) })
+    assert_equal ["127.0.0.1:4000:3000", "6173:5173/udp"], document.fetch("services").fetch("web").fetch("ports")
+  end
+
   def test_rejects_unresolved_or_invalid_published_ports
     document = { "services" => { "web" => { "ports" => [{ "target" => 3000, "published" => "3000-3002" }] } } }
     error = assert_raises(Brunch::CLI::ConfigurationError) { Brunch::ComposePorts.extract(document) }
@@ -40,9 +50,17 @@ class ComposePortsTest < Minitest::Test
     assert_empty Brunch::ComposePorts.extract("services" => { "ignored" => [], "web" => { "ports" => [{}] } })
 
     error = assert_raises(Brunch::CLI::ConfigurationError) do
-      Brunch::ComposePorts.extract("services" => { "web" => { "ports" => ["3000:3000"] } })
+      Brunch::ComposePorts.extract("services" => { "web" => { "ports" => ["3000"] } })
     end
     assert_includes error.message, "Unsupported Compose port"
+    error = assert_raises(Brunch::CLI::ConfigurationError) do
+      Brunch::ComposePorts.extract("services" => { "web" => { "ports" => [3000] } })
+    end
+    assert_includes error.message, "Unsupported Compose port"
+    error = assert_raises(Brunch::CLI::ConfigurationError) do
+      Brunch::ComposePorts.extract("services" => { "web" => { "ports" => ["3000:3000/sctp"] } })
+    end
+    assert_includes error.message, "Unsupported protocol"
     error = assert_raises(Brunch::CLI::ConfigurationError) do
       Brunch::ComposePorts.extract("services" => { "web" => { "ports" => [{ "target" => 3000, "published" => 3000, "protocol" => "sctp" }] } })
     end
