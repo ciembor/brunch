@@ -140,6 +140,15 @@ With Compose, each branch keeps its own Compose project and named volumes, so pe
 Returning to a previously activated branch starts its stopped containers again,
 preserving files written inside them. The branch keeps the same host port.
 
+If a resumed Compose application exits immediately, Brunch recreates that
+environment automatically. This recovers the worktree but discards files kept
+only in the container's writable layer; named volumes remain intact.
+
+Applications that write a PID file inside the container should remove it before
+starting. For example, a Rails Compose command can begin with
+`rm -f /tmp/rails-server.pid &&`. A stopped container keeps its writable layer,
+including a stale PID file, until it is recreated.
+
 To manually start the environment after `brunch stop`:
 
 ```bash
@@ -194,6 +203,10 @@ brunch watch
 
 Switching branches inside one worktree does not affect environments running in other worktrees.
 
+For reliable automatic handling of forced branch renames such as
+`git branch -M source target`, use a Git version supported by `ghe doctor` and
+run `brunch install` after upgrading git-hooks-ext.
+
 If you create a worktree with plain Git:
 
 ```bash
@@ -214,6 +227,9 @@ brunch cleanup
 ```
 
 Brunch never deletes the worktree source directory.
+It removes environments for worktrees that Git no longer reports; it does not
+act as a general-purpose command for deleting the current worktree's stopped
+containers or volumes.
 
 ## Managers
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0 - 2026-10-16
+
+- Recover automatically when a stopped Compose environment cannot resume: Brunch
+  recreates the failed environment instead of leaving its worktree unavailable.
+- Correctly reconcile forced branch renames such as `git branch -M source target`
+  when the destination already has an environment.
+- Keep the 100% line and branch coverage gate for the regular test suite while
+  allowing manager integration jobs to report functional failures directly.
+- Clarify the lifecycle of stopped Compose containers, Rails PID files, forced
+  branch renames, and `brunch cleanup`.
+
 ## 0.9.2 - 2026-10-05
 
 - Settle branch deletions automatically after the Git process exits, preserving

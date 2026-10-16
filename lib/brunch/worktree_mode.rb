@@ -130,16 +130,16 @@ module Brunch
         end
         if existing && !force && existing["snapshot"] == path && existing["status"] != "starting"
           with_state_lock { |data| data.fetch("worktrees").fetch(id)["current"] = ref }
-          unless worktree_manager(existing).resume(existing)
-            abort "Could not resume environment for #{path}; the container may have exited. Check brunch logs. " \
-                  "If dependencies changed, rebuild with brunch restart (this replaces the container)."
+          if worktree_manager(existing).resume(existing)
+            with_state_lock do |data|
+              data.fetch("worktrees").fetch(id).fetch("environments").fetch(ref)["status"] = "running"
+            end
+            puts "Resumed #{ref} in #{path} at http://127.0.0.1:#{existing.fetch('port')}"
+            return
           end
 
-          with_state_lock do |data|
-            data.fetch("worktrees").fetch(id).fetch("environments").fetch(ref)["status"] = "running"
-          end
-          puts "Resumed #{ref} in #{path} at http://127.0.0.1:#{existing.fetch('port')}"
-          return
+          warn "Could not resume #{ref}; recreating its environment."
+          force = true
         end
         abort "Could not reset environment for #{path}." if existing && !worktree_manager(existing).reset(existing)
 
@@ -331,7 +331,7 @@ module Brunch
         renamed = renamed_branch(ref, nil, refs)
         next if renamed == :unknown
 
-        renamed ? rename_branch_environments(ref, renamed) : remove_branch_environments(ref)
+        renamed ? rename_branch_environments(ref, renamed, replace_existing: true) : remove_branch_environments(ref)
       end
     end
 

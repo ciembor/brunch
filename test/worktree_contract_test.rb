@@ -295,9 +295,11 @@ class WorktreeContractTest < Minitest::Test
 
         cli.send(:worktree_stop, root)
         manager.resume_result = false
-        error = assert_raises(SystemExit) { cli.send(:worktree_activate, root) }
-        assert_equal 1, error.status
-        assert_equal "stopped", cli.send(:current_worktree_entry, cli.send(:state)).last.fetch("status")
+        out, error = capture_io { cli.send(:worktree_activate, root) }
+        assert_includes error, "Could not resume main; recreating its environment."
+        assert_includes out, "Started main"
+        assert_includes manager.events, [:reset, "main"]
+        assert_equal "running", cli.send(:current_worktree_entry, cli.send(:state)).last.fetch("status")
         manager.resume_result = true
         cli.send(:worktree_activate, root)
         assert_equal "running", cli.send(:current_worktree_entry, cli.send(:state)).last.fetch("status")
@@ -530,6 +532,28 @@ class WorktreeContractTest < Minitest::Test
         assert environments.key?("renamed")
         refute environments.key?("feature")
         refute_includes manager.events, [:remove, "feature"]
+      end
+    end
+  end
+
+  def test_forced_rename_replaces_the_destination_environment_from_the_reflog
+    with_repo do |cli, root|
+      manager = ManagerDouble.new
+      Brunch::Managers.stub(:build, manager) do
+        cli.send(:worktree_activate, root)
+        assert system("git", "-C", root, "switch", "--quiet", "-c", "source")
+        cli.send(:worktree_activate, root)
+        assert system("git", "-C", root, "switch", "--quiet", "-c", "target")
+        cli.send(:worktree_activate, root)
+        assert system("git", "-C", root, "switch", "--quiet", "main")
+
+        assert system("git", "-C", root, "branch", "-M", "source", "target")
+        cli.start(["status"])
+
+        environments = cli.send(:state).fetch("worktrees").values.first.fetch("environments")
+        assert environments.key?("target")
+        refute environments.key?("source")
+        assert_includes manager.events, [:remove, "target"]
       end
     end
   end
